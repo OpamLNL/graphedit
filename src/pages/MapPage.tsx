@@ -224,7 +224,8 @@ export default function MapPage() {
                             `Рівень ${selectedLevel}: ${levelCounts[selectedLevel ?? 0] ?? 0} тем + сусідні зв'язки`}
                         {viewMode === 'focus' && 'Вузол + предки/нащадки (±2 кроки)'}
                         {' · '}
-                        <span className="text-success">●</span> доступно
+                        <span className="text-warning">●</span> обрано
+                        <span className="text-success ml-2">●</span> доступно
                         <span className="text-info ml-2">●</span> завершено
                         <span className="opacity-50 ml-2">●</span> locked
                     </p>
