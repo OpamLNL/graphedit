@@ -3,8 +3,8 @@
 @tailwind utilities;
 
 :root {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    line-height: 1.5;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    line-height: 1.6;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
@@ -20,44 +20,67 @@ body {
     min-height: 100vh;
 }
 
-/* Home hero backgrounds */
-.hero-mesh-dark {
-    background-color: #0f172a;
-    background-image:
-        radial-gradient(at 40% 20%, hsla(228, 90%, 55%, 0.25) 0px, transparent 50%),
-        radial-gradient(at 80% 0%, hsla(189, 100%, 56%, 0.15) 0px, transparent 50%),
-        radial-gradient(at 0% 50%, hsla(355, 85%, 55%, 0.1) 0px, transparent 50%),
-        radial-gradient(at 80% 80%, hsla(340, 100%, 60%, 0.12) 0px, transparent 50%);
+.font-display {
+    font-family: 'Syne', system-ui, sans-serif;
 }
 
-.hero-mesh-light {
-    background-color: #f0f9ff;
+.landing-dark {
+    background-color: #0c0e1a;
     background-image:
-        radial-gradient(at 40% 20%, hsla(210, 90%, 65%, 0.35) 0px, transparent 50%),
-        radial-gradient(at 80% 0%, hsla(180, 80%, 60%, 0.2) 0px, transparent 50%),
-        radial-gradient(at 0% 80%, hsla(260, 80%, 70%, 0.15) 0px, transparent 50%);
+        radial-gradient(ellipse 80% 60% at 50% -10%, rgba(99, 102, 241, 0.28), transparent),
+        radial-gradient(ellipse 50% 40% at 90% 60%, rgba(124, 58, 237, 0.15), transparent),
+        radial-gradient(ellipse 40% 30% at 10% 80%, rgba(14, 165, 233, 0.12), transparent);
 }
 
-.grid-overlay {
-    background-size: 40px 40px;
+.landing-light {
+    background-color: #f8fafc;
     background-image:
-        linear-gradient(to right, rgba(128, 128, 128, 0.07) 1px, transparent 1px),
-        linear-gradient(to bottom, rgba(128, 128, 128, 0.07) 1px, transparent 1px);
+        radial-gradient(ellipse 80% 60% at 50% -10%, rgba(99, 102, 241, 0.12), transparent),
+        radial-gradient(ellipse 50% 40% at 90% 60%, rgba(124, 58, 237, 0.08), transparent);
+}
+
+.dot-grid {
+    background-image: radial-gradient(circle, rgba(128, 128, 128, 0.15) 1px, transparent 1px);
+    background-size: 24px 24px;
 }
 
 .glass-card {
-    @apply backdrop-blur-md bg-base-100/70 border border-base-content/10 shadow-xl rounded-2xl;
+    @apply backdrop-blur-xl bg-base-100/60 border border-base-content/10 shadow-2xl rounded-2xl;
 }
 
-.progress-ring {
-    transform: rotate(-90deg);
+.stat-card {
+    @apply glass-card p-6 text-center transition-transform hover:-translate-y-1;
 }
 
-@keyframes float {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-8px); }
+.stat-value {
+    @apply font-display text-4xl md:text-5xl font-bold bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent;
 }
 
-.animate-float {
-    animation: float 4s ease-in-out infinite;
+.graph-node {
+    @apply absolute w-10 h-10 rounded-full border-2 border-primary/60 bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary;
+    box-shadow: 0 0 20px rgba(99, 102, 241, 0.35);
+}
+
+.graph-edge {
+    stroke: rgba(129, 140, 248, 0.5);
+    stroke-width: 2;
+    fill: none;
+}
+
+@keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 16px rgba(99, 102, 241, 0.3); }
+    50% { box-shadow: 0 0 28px rgba(99, 102, 241, 0.55); }
+}
+
+.node-glow {
+    animation: pulse-glow 3s ease-in-out infinite;
+}
+
+@keyframes slide-up {
+    from { opacity: 0; transform: translateY(24px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-slide-up {
+    animation: slide-up 0.6s ease-out forwards;
 }
