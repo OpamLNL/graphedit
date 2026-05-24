@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate, useParams } from 'react-router-dom';
 import Graph from '../components/Graph/Graph';
 import SidebarNodes from '../components/SidebarNodes/SidebarNodes';
 import type { NodeData, EdgeData } from '../components/Graph/Graph';
 import NodeInfoPanel from '../components/NodeInfoPanel/NodeInfoPanel';
 import { nodesApi } from '../api/nodes';
+import { knowledgeMapsApi, type KnowledgeMap } from '../api/knowledgeMaps';
 import { useAuth } from '../context/AuthContext';
 
 export default function MapPage() {
+    const { mapId: mapIdParam } = useParams<{ mapId: string }>();
+    const mapId = Number(mapIdParam);
     const { user, loading: authLoading } = useAuth();
+    const [mapMeta, setMapMeta] = useState<KnowledgeMap | null>(null);
     const [nodes, setNodes] = useState<(NodeData & { level: number })[]>([]);
     const [edges, setEdges] = useState<EdgeData[]>([]);
     const [loading, setLoading] = useState(true);
@@ -17,14 +21,18 @@ export default function MapPage() {
     const [showSidebar, setShowSidebar] = useState(true);
 
     useEffect(() => {
-        if (!user) {
+        if (!user || !mapId || Number.isNaN(mapId)) {
             setLoading(false);
             return;
         }
 
-        nodesApi
-            .getGraph()
-            .then((data) => {
+        setLoading(true);
+        Promise.all([
+            knowledgeMapsApi.getOne(mapId),
+            nodesApi.getGraph(mapId),
+        ])
+            .then(([meta, data]) => {
+                setMapMeta(meta);
                 const formattedNodes = data.nodes.map((node) => ({
                     ...node,
                     label: node.title || `Вузол ${node.id}`,
@@ -41,7 +49,7 @@ export default function MapPage() {
             })
             .catch(console.error)
             .finally(() => setLoading(false));
-    }, [user, refresh]);
+    }, [user, mapId, refresh]);
 
     if (authLoading) return <div className="p-8 text-center">Завантаження...</div>;
 
@@ -52,6 +60,10 @@ export default function MapPage() {
                 <Link to="/login" className="btn btn-primary">Увійти через Google</Link>
             </div>
         );
+    }
+
+    if (!mapId || Number.isNaN(mapId)) {
+        return <Navigate to="/maps" replace />;
     }
 
     return (
@@ -72,8 +84,14 @@ export default function MapPage() {
             <div className="flex-1 flex flex-col">
                 <div className="px-4 py-3 border-b border-base-content/10 flex justify-between items-center bg-base-100/50">
                     <div>
-                        <h1 className="text-lg font-bold">Карта знань</h1>
-                        <p className="text-xs opacity-60">Натисни на вузол для деталей</p>
+                        <div className="flex items-center gap-2">
+                            <Link to="/maps" className="btn btn-ghost btn-xs">← Карти</Link>
+                            <h1 className="text-lg font-bold">{mapMeta?.title ?? 'Карта знань'}</h1>
+                            {mapMeta?.status === 'published' && (
+                                <span className="badge badge-success badge-xs">published</span>
+                            )}
+                        </div>
+                        <p className="text-xs opacity-60 mt-0.5">Натисни на вузол для деталей та прогресу</p>
                     </div>
                     <button className="btn btn-sm btn-outline" onClick={() => setShowSidebar((p) => !p)}>
                         {showSidebar ? '← Сховати' : '→ Панель'}

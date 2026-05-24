@@ -77,7 +77,7 @@ export default function ProgressPage() {
                     ))}
             </ul>
 
-            <Link to="/map" className="btn btn-primary mt-8 w-full">
+            <Link to="/maps" className="btn btn-primary mt-8 w-full">
                 Продовжити навчання →
             </Link>
         </div>

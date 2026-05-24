@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { loginWithGoogle } from '../api';
-
+import HeroGraph from '../components/Graph/HeroGraph';
 const PROMO_STATS = [
     { value: '532+', label: 'вузлів у графі', sub: 'програмовані теми' },
     { value: '996+', label: 'зв\'язків', sub: 'DAG-структура' },
@@ -49,8 +49,6 @@ const STEPS = [
     { num: '02', title: 'Побудуй граф', text: 'З\'єднай теми ребрами-prerequisite' },
     { num: '03', title: 'Опублікуй', text: 'Студенти отримують інтерактивну карту' },
 ];
-
-import HeroGraph from '../components/Graph/HeroGraph';
 
 export default function Home() {
     const { user, role } = useAuth();
@@ -100,13 +98,9 @@ export default function Home() {
                         </p>
 
                         <div className="flex flex-wrap gap-3">
-                            {user && isEditor ? (
-                                <Link to="/editor" className="btn btn-primary btn-lg gap-2 shadow-lg shadow-primary/25">
-                                    ✏️ Відкрити редактор
-                                </Link>
-                            ) : user ? (
-                                <Link to="/map" className="btn btn-primary btn-lg gap-2">
-                                    🗺️ Переглянути карту
+                            {user ? (
+                                <Link to="/maps" className="btn btn-primary btn-lg gap-2 shadow-lg shadow-primary/25">
+                                    {isEditor ? '✏️ Мої карти' : '🗺️ Обрати карту'}
                                 </Link>
                             ) : (
                                 <button
@@ -144,7 +138,7 @@ export default function Home() {
                             <div className="flex gap-2 mt-2 px-1">
                                 <span className="badge badge-primary badge-sm">draft</span>
                                 <span className="badge badge-ghost badge-sm opacity-60">7 nodes · 7 edges</span>
-                                <span className="badge badge-ghost badge-sm opacity-40 ml-auto">vis-network</span>
+                                <span className="badge badge-ghost badge-sm opacity-40 ml-auto">React Flow</span>
                             </div>
                         </div>
                     </div>
@@ -234,13 +228,9 @@ export default function Home() {
                         >
                             Увійти через Google
                         </button>
-                    ) : isEditor ? (
-                        <Link to="/editor" className="btn btn-primary btn-lg">
-                            Перейти до редактора →
-                        </Link>
                     ) : (
-                        <Link to="/map" className="btn btn-primary btn-lg">
-                            Відкрити карту знань →
+                        <Link to="/maps" className="btn btn-primary btn-lg">
+                            {isEditor ? 'До моїх карт →' : 'Обрати карту →'}
                         </Link>
                     )}
                 </div>

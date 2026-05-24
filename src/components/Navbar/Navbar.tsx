@@ -14,8 +14,7 @@ type NavLink = {
 
 export const navLinks: NavLink[] = [
     { path: '/', label: 'Головна' },
-    { path: '/editor', label: 'Редактор', editorOnly: true },
-    { path: '/map', label: 'Перегляд', authOnly: true },
+    { path: '/maps', label: 'Карти', authOnly: true },
     { path: '/topics', label: 'Теми' },
     { path: '/progress', label: 'Прогрес', authOnly: true },
     { path: '/admin/adminPage', label: 'Адмін', adminOnly: true },
@@ -102,8 +101,8 @@ export default function Navbar() {
                         {user ? (
                             <>
                                 {isEditor && (
-                                    <Link to="/editor" className="btn btn-primary btn-sm hidden sm:flex gap-1">
-                                        ✏️ Редактор
+                                    <Link to="/maps" className="btn btn-primary btn-sm hidden sm:flex gap-1">
+                                        ✏️ Мої карти
                                     </Link>
                                 )}
                                 <div className="hidden md:flex items-center gap-2 pl-1">

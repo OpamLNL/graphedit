@@ -12,7 +12,7 @@ export default function Login() {
         setLoading(true);
         try {
             await loginWithGoogle();
-            navigate('/map');
+            navigate('/maps');
         } catch (error) {
             console.error('Помилка входу:', error);
         } finally {
