@@ -18,10 +18,34 @@ export function nodeColorByStatus(status: 'completed' | 'available' | 'locked') 
     };
 }
 
-export function buildViewGraphOptions(theme: GraphTheme, mode: 'view' | 'edit' = 'view'): Options {
+export function buildViewGraphOptions(
+    theme: GraphTheme,
+    mode: 'view' | 'edit' = 'view',
+    nodeCount = 0,
+    superMode = false,
+): Options {
     const isDark = theme === 'dark';
     const fontColor = isDark ? '#e2e8f0' : '#1e293b';
-    const edgeColor = isDark ? 'rgba(129, 140, 248, 0.7)' : 'rgba(79, 70, 229, 0.55)';
+    const edgeColor = isDark ? 'rgba(129, 140, 248, 0.55)' : 'rgba(79, 70, 229, 0.4)';
+    const isLarge = nodeCount > 80;
+
+    const scaling =
+        isLarge && !superMode
+            ? {
+                  min: 8,
+                  max: 22,
+                  label: {
+                      enabled: true,
+                      min: 0,
+                      max: 12,
+                      maxVisible: 20,
+                      drawThreshold: 4,
+                  },
+              }
+            : {
+                  min: superMode ? 30 : 16,
+                  max: superMode ? 56 : 30,
+              };
 
     return {
         layout: {
@@ -29,42 +53,47 @@ export function buildViewGraphOptions(theme: GraphTheme, mode: 'view' | 'edit' =
                 enabled: true,
                 direction: 'LR',
                 sortMethod: 'directed',
-                nodeSpacing: 55,
-                levelSeparation: 170,
-                treeSpacing: 90,
+                nodeSpacing: superMode ? 80 : isLarge ? 28 : 55,
+                levelSeparation: superMode ? 280 : isLarge ? 220 : 170,
+                treeSpacing: superMode ? 100 : isLarge ? 60 : 90,
+                blockShifting: true,
+                edgeMinimization: true,
+                parentCentralization: true,
             },
         },
         nodes: {
-            shape: 'dot',
-            size: 22,
-            borderWidth: 3,
-            shadow: {
-                enabled: true,
-                color: isDark ? 'rgba(99, 102, 241, 0.4)' : 'rgba(79, 70, 229, 0.2)',
-                size: 14,
-                x: 0,
-                y: 3,
-            },
+            shape: superMode ? 'box' : 'dot',
+            size: superMode ? 40 : isLarge ? 14 : 22,
+            borderWidth: superMode ? 3 : isLarge ? 2 : 3,
+            shadow: superMode || isLarge
+                ? false
+                : {
+                      enabled: true,
+                      color: isDark ? 'rgba(99, 102, 241, 0.4)' : 'rgba(79, 70, 229, 0.2)',
+                      size: 14,
+                      x: 0,
+                      y: 3,
+                  },
             font: {
-                size: 13,
-                color: fontColor,
+                size: superMode ? 14 : isLarge ? 0 : 13,
+                color: superMode ? '#f8fafc' : fontColor,
                 face: 'DM Sans, system-ui, sans-serif',
                 strokeWidth: 0,
             },
-            scaling: { min: 16, max: 30 },
+            scaling,
+            margin: superMode ? 14 : 10,
         },
         edges: {
-            width: 2,
-            smooth: { enabled: true, type: 'cubicBezier', roundness: 0.35 },
+            width: isLarge ? 1 : 2,
+            smooth: { enabled: true, type: 'cubicBezier', roundness: isLarge ? 0.2 : 0.35 },
             color: {
                 color: edgeColor,
                 highlight: isDark ? '#a5b4fc' : '#6366f1',
                 hover: isDark ? '#c7d2fe' : '#818cf8',
+                opacity: isLarge ? 0.45 : 0.85,
             },
-            arrows: { to: { enabled: true, scaleFactor: 0.7, type: 'arrow' } },
-            shadow: isDark
-                ? { enabled: true, color: 'rgba(99, 102, 241, 0.15)', size: 6, x: 0, y: 1 }
-                : false,
+            arrows: { to: { enabled: true, scaleFactor: isLarge ? 0.45 : 0.7, type: 'arrow' } },
+            shadow: false,
         },
         physics: { enabled: false },
         interaction: {
@@ -73,6 +102,9 @@ export function buildViewGraphOptions(theme: GraphTheme, mode: 'view' | 'edit' =
             dragView: true,
             zoomView: true,
             multiselect: mode === 'edit',
+            navigationButtons: true,
+            keyboard: true,
+            tooltipDelay: 120,
         },
     };
 }

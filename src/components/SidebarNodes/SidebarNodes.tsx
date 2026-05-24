@@ -5,13 +5,15 @@ interface SidebarNodesProps {
     nodes: (NodeData & { level: number })[];
     onSidebarNodeClick?: (nodeId: number) => void;
     activeNodeId?: number | null;
+    highlightLevel?: number | null;
 }
 
 export default function SidebarNodes({
-                                         nodes,
-                                         onSidebarNodeClick,
-                                         activeNodeId = null,
-                                     }: SidebarNodesProps) {
+    nodes,
+    onSidebarNodeClick,
+    activeNodeId = null,
+    highlightLevel = null,
+}: SidebarNodesProps) {
     const [focusedId, setFocusedId] = useState<number | null>(activeNodeId);
     const [expandedLevels, setExpandedLevels] = useState<number[]>([]);
     const [panelExpanded, setPanelExpanded] = useState(true);
@@ -19,6 +21,14 @@ export default function SidebarNodes({
     useEffect(() => {
         setFocusedId(activeNodeId ?? null);
     }, [activeNodeId]);
+
+    useEffect(() => {
+        if (highlightLevel != null) {
+            setExpandedLevels((prev) =>
+                prev.includes(highlightLevel) ? prev : [...prev, highlightLevel],
+            );
+        }
+    }, [highlightLevel]);
 
     const validNodes = nodes.filter((n) => typeof n.level === "number");
 
@@ -65,13 +75,15 @@ export default function SidebarNodes({
             <h2 className="text-xl font-bold mb-4">Навчальні рівні</h2>
             {sortedLevels.map((level) => {
                 const isExpanded = expandedLevels.includes(level);
+                const isHighlighted = highlightLevel === level;
                 return (
-                    <div key={level} className="mb-2">
+                    <div key={level} className={`mb-2 rounded-lg ${isHighlighted ? 'bg-primary/10 px-2 -mx-2' : ''}`}>
                         <div
                             className="text-lg font-semibold mb-1 cursor-pointer hover:underline"
                             onClick={() => toggleLevel(level)}
                         >
                             {isExpanded ? "▾" : "▸"} Рівень {level}
+                            <span className="text-xs opacity-40 ml-1">({grouped[level].length})</span>
                         </div>
 
                         {isExpanded && (
