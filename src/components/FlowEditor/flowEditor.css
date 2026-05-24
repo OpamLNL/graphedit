@@ -1,0 +1,91 @@
+.knowledge-node {
+    min-width: 140px;
+    max-width: 200px;
+    padding: 2px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, var(--node-accent, #6366f1), color-mix(in srgb, var(--node-accent, #6366f1) 70%, #000));
+    box-shadow:
+        0 4px 20px color-mix(in srgb, var(--node-accent, #6366f1) 35%, transparent),
+        0 0 0 1px color-mix(in srgb, var(--node-accent, #6366f1) 50%, transparent);
+    transition: box-shadow 0.2s, transform 0.15s;
+}
+
+.knowledge-node--selected {
+    box-shadow:
+        0 0 0 2px #fff,
+        0 0 0 4px var(--node-accent, #6366f1),
+        0 8px 28px color-mix(in srgb, var(--node-accent, #6366f1) 45%, transparent);
+    transform: scale(1.02);
+}
+
+.knowledge-node-inner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: rgba(12, 14, 26, 0.88);
+    backdrop-filter: blur(8px);
+}
+
+[data-theme='light'] .knowledge-node-inner {
+    background: rgba(255, 255, 255, 0.95);
+}
+
+.knowledge-node-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--node-accent, #6366f1);
+    box-shadow: 0 0 8px var(--node-accent, #6366f1);
+    flex-shrink: 0;
+}
+
+.knowledge-node-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #f1f5f9;
+    line-height: 1.3;
+    word-break: break-word;
+}
+
+[data-theme='light'] .knowledge-node-label {
+    color: #1e293b;
+}
+
+.knowledge-handle {
+    width: 8px !important;
+    height: 8px !important;
+    background: var(--node-accent, #6366f1) !important;
+    border: 2px solid #fff !important;
+}
+
+.flow-canvas .react-flow__background {
+    background: transparent;
+}
+
+.flow-canvas .react-flow__minimap {
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+.flow-canvas .react-flow__controls {
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.flow-canvas .react-flow__controls-button {
+    background: hsl(var(--b1, 0 0% 100%) / 0.9);
+    border-bottom-color: rgba(128, 128, 128, 0.15);
+}
+
+.flow-canvas .react-flow__edge-path {
+    stroke-width: 2;
+}
+
+.flow-canvas .react-flow__edge.selected .react-flow__edge-path {
+    stroke: #a5b4fc !important;
+    stroke-width: 3;
+}
