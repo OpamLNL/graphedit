@@ -1,34 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { NodeData } from '../Graph/Graph';
-import { topicsApi } from '../../api/topics';
+import type { Topic } from '../../api/topics';
 import { progressApi } from '../../api/progress';
-
-interface Topic {
-    id: number;
-    title: string;
-    description: string;
-}
 
 interface NodeInfoPanelProps {
     node: NodeData | null;
+    topic?: Topic | null;
     onProgressUpdate?: () => void;
 }
 
-export default function NodeInfoPanel({ node, onProgressUpdate }: NodeInfoPanelProps) {
-    const [topic, setTopic] = useState<Topic | null>(null);
+export default function NodeInfoPanel({ node, topic: topicProp, onProgressUpdate }: NodeInfoPanelProps) {
     const [marking, setMarking] = useState(false);
-
-    useEffect(() => {
-        if (!node?.topicId) {
-            setTopic(null);
-            return;
-        }
-
-        topicsApi
-            .getOne(node.topicId)
-            .then(setTopic)
-            .catch(() => setTopic(null));
-    }, [node?.topicId]);
 
     const handleMarkAsLearned = async () => {
         if (!node?.topicId) return;
@@ -72,10 +54,12 @@ export default function NodeInfoPanel({ node, onProgressUpdate }: NodeInfoPanelP
                             </button>
                         )}
 
-                        <h2 className="text-xl font-bold">{node.label}</h2>
+                        <h2 className="text-xl font-bold">{topicProp?.title ?? node.title ?? node.label}</h2>
 
-                        {topic?.description && (
-                            <p className="text-sm whitespace-pre-wrap opacity-80 mt-2">{topic.description}</p>
+                        {topicProp?.description && (
+                            <p className="text-sm whitespace-pre-wrap opacity-80 mt-2">
+                                {topicProp.description}
+                            </p>
                         )}
                     </>
                 )}

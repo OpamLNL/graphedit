@@ -126,25 +126,26 @@ export function layoutGroups(groups: GroupData[]): Map<string, { x: number; y: n
     return positions;
 }
 
-const SELECTED_COLOR = {
-    background: '#f59e0b',
-    border: '#ffffff',
-    highlight: { background: '#fbbf24', border: '#ffffff' },
-} as const;
+const SELECTED_BORDER = '#f59e0b';
 
 function topicColor(status: NodeData['status'], isActive: boolean) {
-    if (isActive) return { ...SELECTED_COLOR };
+    const background =
+        status === 'completed' ? '#6366f1' : status === 'available' ? '#10b981' : '#64748b';
+    const border = isActive
+        ? SELECTED_BORDER
+        : status === 'completed'
+          ? '#818cf8'
+          : status === 'available'
+            ? '#34d399'
+            : '#94a3b8';
+
     return {
-        background:
-            status === 'completed' ? '#6366f1' : status === 'available' ? '#10b981' : '#64748b',
-        border:
-            status === 'completed' ? '#818cf8' : status === 'available' ? '#34d399' : '#94a3b8',
-        highlight:
-            status === 'completed'
-                ? { background: '#a5b4fc', border: '#ffffff' }
-                : status === 'available'
-                  ? { background: '#6ee7b7', border: '#ffffff' }
-                  : { background: '#cbd5e1', border: '#ffffff' },
+        background,
+        border,
+        highlight: {
+            background,
+            border: isActive ? SELECTED_BORDER : '#ffffff',
+        },
         opacity: status === 'locked' ? 0.55 : 1,
     };
 }
@@ -163,6 +164,7 @@ export function styledTopicNodes(
             title: `${node.title}\n${statusLabel(node.status)}${isActive ? '\n★ обрано' : ''}`,
             x: pos?.x,
             y: pos?.y,
+            fixed: { x: true, y: true },
             color: topicColor(node.status, isActive),
             size: isActive ? 18 : 12,
             borderWidth: isActive ? 3 : 1.5,
@@ -191,6 +193,7 @@ export function buildGroupSuperGraph(
             title: `${g.title}\n${g.description ?? ''}\n\n${g.topicCount} тем\n✓ ${g.completedCount} · ◐ ${g.availableCount}\n\nКлік — відкрити групу`,
             x: pos.x,
             y: pos.y,
+            fixed: { x: true, y: true },
             shape: 'box' as const,
             size: Math.min(40, 22 + Math.sqrt(g.topicCount) * 2),
             font: { size: 12, color: '#f8fafc', face: 'DM Sans, system-ui, sans-serif' },

@@ -87,14 +87,18 @@ export function buildViewGraphOptions(
         },
         physics: { enabled: false },
         interaction: {
-            hover: false,
+            hover: true,
             dragNodes: mode === 'edit',
             dragView: true,
             zoomView: true,
-            multiselect: mode === 'edit',
+            selectable: false,
+            selectConnectedEdges: false,
+            multiselect: false,
             navigationButtons: false,
-            keyboard: true,
+            keyboard: { enabled: false },
             tooltipDelay: 120,
+            hideEdgesOnDrag: false,
+            hideNodesOnDrag: false,
         },
     };
 }

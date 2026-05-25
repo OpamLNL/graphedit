@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';import { Link, Navigate, useParams } from 'react-router-dom';
 import Graph, {
     type GraphPayload,
     type GraphViewScope,
@@ -10,7 +9,7 @@ import Graph, {
 } from '../components/Graph/Graph';
 import NodeInfoPanel from '../components/NodeInfoPanel/NodeInfoPanel';
 import { nodesApi } from '../api/nodes';
-import { topicsApi } from '../api/topics';
+import { topicsApi, type Topic } from '../api/topics';
 import { knowledgeMapsApi, type KnowledgeMap } from '../api/knowledgeMaps';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -31,6 +30,7 @@ export default function MapPage() {
 
     const [viewScope, setViewScope] = useState<GraphViewScope>('groups');
     const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+    const [topicsById, setTopicsById] = useState<Map<number, Topic>>(new Map());
     const [searchQuery, setSearchQuery] = useState('');
 
     useEffect(() => {
@@ -48,6 +48,7 @@ export default function MapPage() {
         ])
             .then(([meta, data, groupMeta, topics]) => {
                 setMapMeta(meta);
+                setTopicsById(new Map(topics.map((t) => [t.id, t])));
 
                 const topicById = new Map(topics.map((t) => [t.id, t]));
 
@@ -92,6 +93,15 @@ export default function MapPage() {
         [groups, selectedGroupId],
     );
 
+    const activeNode = useMemo(
+        () => (activeNodeId != null ? nodes.find((n) => n.id === activeNodeId) ?? null : null),
+        [nodes, activeNodeId],
+    );
+
+    const activeTopic = useMemo(
+        () => (activeNode ? topicsById.get(activeNode.topicId) ?? null : null),
+        [activeNode, topicsById],
+    );
     const searchResults = useMemo(() => {
         const q = searchQuery.trim().toLowerCase();
         if (!q) return [];
@@ -123,7 +133,10 @@ export default function MapPage() {
     };
 
     const handleSearchPick = (node: NodeData) => {
-        if (node.groupId) handleSelectGroup(node.groupId);
+        if (node.groupId) {
+            setSelectedGroupId(node.groupId);
+            setViewScope('topics');
+        }
         setActiveNodeId(node.id);
         setSearchQuery('');
         setTimeout(() => window.__focusGraphNode?.(node.id), 150);
@@ -264,8 +277,8 @@ export default function MapPage() {
                 </div>
 
                 <NodeInfoPanel
-                    key={`${activeNodeId}-${refresh}`}
-                    node={nodes.find((n) => n.id === activeNodeId) || null}
+                    node={activeNode}
+                    topic={activeTopic}
                     onProgressUpdate={() => setRefresh((r) => r + 1)}
                 />
             </div>
