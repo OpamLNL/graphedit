@@ -1,8 +1,9 @@
 import type { NodeData, EdgeData } from '../components/Graph/Graph';
+import { layoutNodesByLevel, layoutSuperNodesByLevel } from './levelLayout';
 
 /** Нижче — супервузли (рівні). Вище — деталі. Між ними — гістерезис. */
-export const ZOOM_SUPER_MAX = 0.38;
-export const ZOOM_DETAIL_MIN = 0.48;
+export const ZOOM_SUPER_MAX = 0.42;
+export const ZOOM_DETAIL_MIN = 0.52;
 
 export type ZoomDisplayMode = 'super' | 'detail';
 
@@ -69,7 +70,7 @@ export function buildLevelSuperGraph(
             title: `Рівень ${level}\n${total} тем\n✓ ${completed} · ◐ ${available} · 🔒 ${total - completed - available}\n\nНаблизь або клікни`,
             level,
             shape: 'box',
-            size: Math.min(48, 24 + Math.sqrt(total) * 3),
+            size: Math.min(36, 20 + Math.sqrt(total) * 2),
             font: { size: 13, color: '#f8fafc', face: 'DM Sans, system-ui, sans-serif' },
             color: {
                 background: bg,
@@ -95,7 +96,19 @@ export function buildLevelSuperGraph(
         superEdges.push({ from: superNodeId(fl), to: superNodeId(tl) });
     }
 
-    return { nodes: superNodes, edges: superEdges };
+    const superPositions = layoutSuperNodesByLevel(levels);
+
+    const positionedSuperNodes = superNodes.map((node) => {
+        const pos = superPositions.get(node.id)!;
+        return {
+            ...node,
+            x: pos.x,
+            y: pos.y,
+            fixed: { x: true, y: true },
+        };
+    });
+
+    return { nodes: positionedSuperNodes, edges: superEdges };
 }
 
 const SELECTED_COLOR = {
@@ -136,16 +149,25 @@ export function styledDetailNodes(
     isLarge: boolean,
     activeNodeId: number | null = null,
 ) {
+    const positions = layoutNodesByLevel(nodes, {
+        levelSeparation: isLarge ? 180 : 220,
+        nodeSpacing: isLarge ? 38 : 52,
+    });
+
     return nodes.map((node) => {
         const isActive = activeNodeId != null && node.id === activeNodeId;
+        const pos = positions.get(node.id);
         return {
             id: node.id,
             label: isActive || !isLarge ? node.label : '',
             title: `${node.title}\nРівень ${node.level} · ${statusLabel(node.status)}${isActive ? '\n★ обрано' : ''}`,
             level: node.level,
+            x: pos?.x,
+            y: pos?.y,
+            fixed: { x: true, y: true },
             color: colorForNode(node, isActive),
-            size: isActive ? (isLarge ? 22 : 28) : isLarge ? 14 : 22,
-            borderWidth: isActive ? 4 : isLarge ? 2 : 3,
+            size: isActive ? (isLarge ? 16 : 28) : isLarge ? 10 : 22,
+            borderWidth: isActive ? 3 : isLarge ? 1.5 : 3,
         };
     });
 }
@@ -165,8 +187,8 @@ export function patchActiveNodeHighlight(
             updates.push({
                 id: prevActiveId,
                 color: colorForNode(prev, false),
-                size: isLarge ? 14 : 22,
-                borderWidth: isLarge ? 2 : 3,
+                size: isLarge ? 10 : 22,
+                borderWidth: isLarge ? 1.5 : 3,
             });
         }
     }
@@ -177,8 +199,8 @@ export function patchActiveNodeHighlight(
             updates.push({
                 id: activeNodeId,
                 color: colorForNode(curr, true),
-                size: isLarge ? 22 : 28,
-                borderWidth: 4,
+                size: isLarge ? 16 : 28,
+                borderWidth: 3,
                 label: curr.label,
             });
         }

@@ -7,6 +7,18 @@ export function getLevelRange(nodes: { level: number }[]): number[] {
     return levels;
 }
 
+/** Лише вузли одного рівня (без сусідніх колонок). */
+export function filterGraphByLevel(
+    nodes: NodeData[],
+    edges: EdgeData[],
+    level: number,
+): { nodes: NodeData[]; edges: EdgeData[] } {
+    const filteredNodes = nodes.filter((n) => n.level === level);
+    const ids = new Set(filteredNodes.map((n) => n.id));
+    const filteredEdges = edges.filter((e) => ids.has(e.from) && ids.has(e.to));
+    return { nodes: filteredNodes, edges: filteredEdges };
+}
+
 export function filterGraphForView(
     nodes: NodeData[],
     edges: EdgeData[],
@@ -21,21 +33,7 @@ export function filterGraphForView(
     const nodeIds = new Set<number>();
 
     if (mode === 'level' && selectedLevel != null) {
-        const inLevel = nodes.filter((n) => n.level === selectedLevel);
-        inLevel.forEach((n) => nodeIds.add(n.id));
-
-        // контекст: сусідні рівні, з'єднані ребрами
-        for (const e of edges) {
-            const from = nodes.find((n) => n.id === e.from);
-            const to = nodes.find((n) => n.id === e.to);
-            if (!from || !to) continue;
-            const touchesLevel =
-                from.level === selectedLevel || to.level === selectedLevel;
-            if (touchesLevel) {
-                nodeIds.add(e.from);
-                nodeIds.add(e.to);
-            }
-        }
+        filterGraphByLevel(nodes, edges, selectedLevel).nodes.forEach((n) => nodeIds.add(n.id));
     }
 
     if (mode === 'focus' && focusNodeId != null) {

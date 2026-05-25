@@ -9,6 +9,7 @@ import { knowledgeMapsApi, type KnowledgeMap } from '../api/knowledgeMaps';
 import { useAuth } from '../context/AuthContext';
 import {
     filterGraphForView,
+    filterGraphByLevel,
     getLevelRange,
     searchNodes,
     countByLevel,
@@ -28,7 +29,7 @@ export default function MapPage() {
     const [refresh, setRefresh] = useState(0);
     const [showSidebar, setShowSidebar] = useState(true);
 
-    const [viewMode, setViewMode] = useState<MapViewMode>('overview');
+    const [viewMode, setViewMode] = useState<MapViewMode>('level');
     const [selectedLevel, setSelectedLevel] = useState<number | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [zoomDisplay, setZoomDisplay] = useState<ZoomDisplayMode>('super');
@@ -73,11 +74,23 @@ export default function MapPage() {
     const levels = useMemo(() => getLevelRange(nodes), [nodes]);
     const levelCounts = useMemo(() => countByLevel(nodes), [nodes]);
 
+    const isLargeMap = nodes.length > 80;
+
     const visibleGraph = useMemo(
         () =>
             filterGraphForView(nodes, edges, viewMode, selectedLevel, activeNodeId),
         [nodes, edges, viewMode, selectedLevel, activeNodeId],
     );
+
+    const displayGraph = useMemo(() => {
+        if (viewMode === 'overview') {
+            if (isLargeMap && zoomDisplay === 'detail' && selectedLevel != null) {
+                return filterGraphByLevel(nodes, edges, selectedLevel);
+            }
+            return { nodes, edges };
+        }
+        return visibleGraph;
+    }, [nodes, edges, viewMode, visibleGraph, zoomDisplay, selectedLevel, isLargeMap]);
 
     const searchResults = useMemo(
         () => searchNodes(nodes, searchQuery).slice(0, 8),
@@ -86,7 +99,17 @@ export default function MapPage() {
 
     const handleSelectNode = (id: number) => {
         setActiveNodeId(id);
+        const node = nodes.find((n) => n.id === id);
+        if (node) setSelectedLevel(node.level);
         localStorage.setItem('lastFocusedNodeId', id.toString());
+    };
+
+    const handleZoomModeChange = (mode: ZoomDisplayMode) => {
+        setZoomDisplay(mode);
+        if (mode === 'detail' && selectedLevel == null && nodes.length > 0) {
+            const first = nodes.find((n) => n.status === 'available') ?? nodes[0];
+            setSelectedLevel(first.level);
+        }
     };
 
     if (authLoading) return <div className="p-8 text-center">Завантаження...</div>;
@@ -161,9 +184,29 @@ export default function MapPage() {
                                             selectedLevel === lv ? 'btn-secondary' : 'btn-ghost'
                                         }`}
                                         onClick={() => setSelectedLevel(lv)}
-                                        title={`${levelCounts[lv] ?? 0} тем`}
+                                        title={`${levelCounts[lv] ?? 0} тем на рівні`}
                                     >
                                         L{lv}
+                                        <span className="opacity-50 ml-0.5">({levelCounts[lv] ?? 0})</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        {viewMode === 'overview' && isLargeMap && zoomDisplay === 'detail' && (
+                            <div className="flex flex-wrap gap-1 max-w-md overflow-x-auto">
+                                {levels.map((lv) => (
+                                    <button
+                                        key={lv}
+                                        type="button"
+                                        className={`btn btn-xs ${
+                                            selectedLevel === lv ? 'btn-secondary' : 'btn-ghost'
+                                        }`}
+                                        onClick={() => setSelectedLevel(lv)}
+                                        title={`${levelCounts[lv] ?? 0} тем на рівні`}
+                                    >
+                                        L{lv}
+                                        <span className="opacity-50 ml-0.5">({levelCounts[lv] ?? 0})</span>
                                     </button>
                                 ))}
                             </div>
@@ -219,9 +262,11 @@ export default function MapPage() {
                         {viewMode === 'overview' && zoomDisplay === 'super' &&
                             'Semantic zoom: рівні як супервузли. Наблизь (scroll+) — розкриються теми. Клік по рівню — перехід до нього.'}
                         {viewMode === 'overview' && zoomDisplay === 'detail' &&
-                            'Детальний вигляд. Віддалити (scroll−) — знову згрупуються в рівні.'}
+                            (isLargeMap && selectedLevel != null
+                                ? `Рівень ${selectedLevel}: ${levelCounts[selectedLevel] ?? 0} тем. Перемикай L0…Ln або віддалити — знову згрупуються.` 
+                                : 'Детальний вигляд. Віддалити (scroll−) — знову згрупуються в рівні.')}
                         {viewMode === 'level' &&
-                            `Рівень ${selectedLevel}: ${levelCounts[selectedLevel ?? 0] ?? 0} тем + сусідні зв'язки`}
+                            `Рівень ${selectedLevel}: ${levelCounts[selectedLevel ?? 0] ?? 0} тем (лише цей рівень)`}
                         {viewMode === 'focus' && 'Вузол + предки/нащадки (±2 кроки)'}
                         {' · '}
                         <span className="text-warning">●</span> обрано
@@ -231,21 +276,26 @@ export default function MapPage() {
                     </p>
                 </div>
 
-                <div className="flex flex-1 overflow-hidden">
-                    <div className="flex-1 relative">
+                <div className="flex flex-1 min-h-0 overflow-hidden">
+                    <div className="flex-1 relative min-h-0">
                         {loading ? (
                             <div className="absolute inset-0 flex items-center justify-center opacity-60">
                                 Завантаження графу...
                             </div>
                         ) : (
                             <Graph
-                                key={`${viewMode}-${selectedLevel}`}
-                                nodes={viewMode === 'overview' ? nodes : visibleGraph.nodes}
-                                edges={viewMode === 'overview' ? edges : visibleGraph.edges}
+                                key={`${viewMode}-${selectedLevel}-${zoomDisplay}`}
+                                nodes={displayGraph.nodes}
+                                edges={displayGraph.edges}
                                 onNodeClick={handleSelectNode}
                                 activeNodeId={activeNodeId}
-                                semanticZoom={viewMode === 'overview' && nodes.length > 80}
-                                onZoomModeChange={setZoomDisplay}
+                                activeNodeTitle={
+                                    nodes.find((n) => n.id === activeNodeId)?.title ?? null
+                                }
+                                selectedLevel={selectedLevel}
+                                levelRange={levels}
+                                semanticZoom={viewMode === 'overview' && isLargeMap}
+                                onZoomModeChange={handleZoomModeChange}
                                 onLevelFocus={(level) => setSelectedLevel(level)}
                             />
                         )}

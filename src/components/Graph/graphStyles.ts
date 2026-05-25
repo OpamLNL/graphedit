@@ -32,39 +32,29 @@ export function buildViewGraphOptions(
     const scaling =
         isLarge && !superMode
             ? {
-                  min: 8,
-                  max: 22,
+                  min: 6,
+                  max: 14,
                   label: {
                       enabled: true,
                       min: 0,
-                      max: 12,
-                      maxVisible: 20,
-                      drawThreshold: 4,
+                      max: 10,
+                      maxVisible: 16,
+                      drawThreshold: 3,
                   },
               }
             : {
-                  min: superMode ? 30 : 16,
-                  max: superMode ? 56 : 30,
+                  min: superMode ? 24 : 16,
+                  max: superMode ? 44 : 30,
               };
 
     return {
-        layout: {
-            hierarchical: {
-                enabled: true,
-                direction: 'LR',
-                sortMethod: 'directed',
-                nodeSpacing: superMode ? 80 : isLarge ? 28 : 55,
-                levelSeparation: superMode ? 280 : isLarge ? 220 : 170,
-                treeSpacing: superMode ? 100 : isLarge ? 60 : 90,
-                blockShifting: true,
-                edgeMinimization: true,
-                parentCentralization: true,
-            },
-        },
+        layout: superMode
+            ? { hierarchical: { enabled: false } }
+            : { hierarchical: { enabled: false } },
         nodes: {
             shape: superMode ? 'box' : 'dot',
-            size: superMode ? 40 : isLarge ? 14 : 22,
-            borderWidth: superMode ? 3 : isLarge ? 2 : 3,
+            size: superMode ? 32 : isLarge ? 10 : 22,
+            borderWidth: superMode ? 2 : isLarge ? 1.5 : 3,
             shadow: superMode || isLarge
                 ? false
                 : {
@@ -102,7 +92,7 @@ export function buildViewGraphOptions(
             dragView: true,
             zoomView: true,
             multiselect: mode === 'edit',
-            navigationButtons: true,
+            navigationButtons: false,
             keyboard: true,
             tooltipDelay: 120,
         },
