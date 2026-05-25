@@ -4,14 +4,23 @@ import { useTheme } from '../../context/ThemeContext';
 import { buildViewGraphOptions } from './graphStyles';
 import GraphMapHUD from './GraphMapHUD';
 import {
+    applyStoredViewport,
     buildFocusMoveTo,
     ensureGraphVisible,
+    fitViewTopAnchored,
     limitsFromFitScale,
     zoomAtDomPoint,
 } from '../../utils/graphViewport';
 import {
+    loadStoredViewport,
+    saveStoredViewport,
+    viewportStorageKey,
+} from '../../utils/graphViewportStorage';
+import { isolatedNodeIds } from '../../utils/graphLayout';
+import {
     buildGroupSuperGraph,
     filterGraphByGroup,
+    getSoloGroupIds,
     groupIdFromNodeId,
     isGroupNodeId,
     layoutGroups,
@@ -35,6 +44,7 @@ export interface NodeData {
     globalOrder?: number | null;
     progress: number;
     status: 'completed' | 'available' | 'locked';
+    color?: string | null;
 }
 
 export interface EdgeData {
@@ -52,6 +62,8 @@ export interface GroupData {
     completedCount: number;
     availableCount: number;
     progressPercent: number;
+    x?: number | null;
+    y?: number | null;
 }
 
 export interface GroupEdgeData {
@@ -91,7 +103,16 @@ interface GraphProps {
     onEdgesDelete?: (edges: { from: number; to: number; id?: string }[]) => void;
     onGroupEdgesDelete?: (edges: { from: string; to: string; id?: number }[]) => void;
     onNodePositionChange?: (nodeId: number, x: number, y: number) => void;
+    onGroupPositionChange?: (groupId: string, x: number, y: number) => void;
     onBackToGroups?: () => void;
+    onClearSelection?: () => void;
+    viewportStorageId?: number | string;
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    const tag = target.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
 }
 
 function getCanvasSize(container: HTMLElement | null) {
@@ -149,7 +170,10 @@ export default function Graph({
     onEdgesDelete,
     onGroupEdgesDelete,
     onNodePositionChange,
+    onGroupPositionChange,
     onBackToGroups,
+    onClearSelection,
+    viewportStorageId,
 }: GraphProps) {
     const shellRef = useRef<HTMLDivElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -172,7 +196,10 @@ export default function Graph({
     const handleNodePickRef = useRef<(rawId: number | string) => void>(() => {});
     const handleGroupPickRef = useRef<(groupId: string) => void>(() => {});
     const lastGroupPickAtRef = useRef(0);
+    const skipNodePickRef = useRef(false);
     const fitScaleRef = useRef(0.85);
+    const viewportStorageIdRef = useRef(viewportStorageId);
+    const saveViewportTimerRef = useRef<number | null>(null);
 
     const onGroupSelectRef = useRef(onGroupSelect);
     const onGroupClickRef = useRef(onGroupClick);
@@ -184,7 +211,9 @@ export default function Graph({
     const onEdgesDeleteRef = useRef(onEdgesDelete);
     const onGroupEdgesDeleteRef = useRef(onGroupEdgesDelete);
     const onNodePositionChangeRef = useRef(onNodePositionChange);
+    const onGroupPositionChangeRef = useRef(onGroupPositionChange);
     const onBackToGroupsRef = useRef(onBackToGroups);
+    const onClearSelectionRef = useRef(onClearSelection);
     const editModeRef = useRef(editMode);
     const connectModeRef = useRef(connectMode);
     const connectSourceIdRef = useRef(connectSourceId);
@@ -209,11 +238,57 @@ export default function Graph({
     onEdgesDeleteRef.current = onEdgesDelete;
     onGroupEdgesDeleteRef.current = onGroupEdgesDelete;
     onNodePositionChangeRef.current = onNodePositionChange;
+    onGroupPositionChangeRef.current = onGroupPositionChange;
     onBackToGroupsRef.current = onBackToGroups;
+    onClearSelectionRef.current = onClearSelection;
     editModeRef.current = editMode;
     connectModeRef.current = connectMode;
     connectSourceIdRef.current = connectSourceId;
     connectSourceGroupIdRef.current = connectSourceGroupId;
+    viewportStorageIdRef.current = viewportStorageId;
+
+    const currentViewportKey = useCallback(() => {
+        const id = viewportStorageIdRef.current;
+        if (id == null) return null;
+        return viewportStorageKey(id, viewScopeRef.current, selectedGroupIdRef.current);
+    }, []);
+
+    const persistUserViewport = useCallback(() => {
+        if (programmaticMoveRef.current) return;
+        const key = currentViewportKey();
+        const network = networkRef.current;
+        if (!key || !network) return;
+        saveStoredViewport(key, network);
+    }, [currentViewportKey]);
+
+    const schedulePersistViewport = useCallback(() => {
+        if (saveViewportTimerRef.current != null) {
+            window.clearTimeout(saveViewportTimerRef.current);
+        }
+        saveViewportTimerRef.current = window.setTimeout(() => {
+            saveViewportTimerRef.current = null;
+            persistUserViewport();
+        }, 280);
+    }, [persistUserViewport]);
+
+    const getFitExcludeIds = useCallback((): Set<string> | undefined => {
+        const data = payloadRef.current;
+        if (!data) return undefined;
+
+        if (viewScopeRef.current === 'groups') {
+            const solo = getSoloGroupIds(data.groups, data.groupEdges);
+            return solo.size > 0 ? solo : undefined;
+        }
+
+        const groupId = selectedGroupIdRef.current;
+        if (!groupId) return undefined;
+        const { nodes, edges } = filterGraphByGroup(data.nodes, data.edges, groupId);
+        const isolated = isolatedNodeIds(
+            nodes.map((n) => n.id),
+            edges.map((e) => ({ from: e.from, to: e.to })),
+        );
+        return isolated.size > 0 ? isolated : undefined;
+    }, []);
 
     const runProgrammaticMove = useCallback((callback: () => void, duration = 400) => {
         programmaticMoveRef.current = true;
@@ -222,6 +297,36 @@ export default function Graph({
             programmaticMoveRef.current = false;
         }, duration);
     }, []);
+
+    const applyViewportForView = useCallback(
+        (animate = true) => {
+            const network = networkRef.current;
+            if (!network || !nodesDS.current || nodesDS.current.length === 0) return;
+
+            const scope = viewScopeRef.current;
+            const isGroupView = scope === 'groups';
+            const key = currentViewportKey();
+            const saved = key ? loadStoredViewport(key) : null;
+            const canvasSize = getCanvasSize(containerRef.current);
+
+            runProgrammaticMove(() => {
+                if (saved) {
+                    applyStoredViewport(network, saved, animate);
+                    fitScaleRef.current = saved.scale;
+                    return;
+                }
+
+                fitViewTopAnchored(network, nodeLayoutRef.current, canvasSize, {
+                    excludeIds: getFitExcludeIds(),
+                    padding: isGroupView ? 72 : 48,
+                    topPadding: isGroupView ? 52 : 40,
+                    viewScope: scope,
+                    fitScaleRef,
+                });
+            }, animate ? 400 : 0);
+        },
+        [currentViewportKey, getFitExcludeIds, runProgrammaticMove],
+    );
 
     const captureFitScale = useCallback(() => {
         const network = networkRef.current;
@@ -254,33 +359,28 @@ export default function Graph({
     }, [preferVisibleCanvasPoint]);
 
     const fitView = useCallback(
-        (animate = true, padding = 56) => {
+        (animate = true) => {
             const network = networkRef.current;
             const nodes = nodesDS.current;
             if (!network || !nodes || nodes.length === 0 || isDraggingViewRef.current) return;
 
-            const ids = [...nodes.getIds()];
-            runProgrammaticMove(() => {
-                network.fit({
-                    ...(ids.length > 0 ? { nodes: ids } : {}),
-                    padding,
-                    animation: animate
-                        ? { duration: 400, easingFunction: 'easeInOutQuad' }
-                        : false,
-                });
+            const scope = viewScopeRef.current;
+            const isGroupView = scope === 'groups';
+            const canvasSize = getCanvasSize(containerRef.current);
+            const key = currentViewportKey();
 
-                if (animate) {
-                    const onDone = () => {
-                        captureFitScale();
-                        network.off('animationFinished', onDone);
-                    };
-                    network.on('animationFinished', onDone);
-                } else {
-                    requestAnimationFrame(captureFitScale);
-                }
-            });
+            runProgrammaticMove(() => {
+                fitViewTopAnchored(network, nodeLayoutRef.current, canvasSize, {
+                    excludeIds: getFitExcludeIds(),
+                    padding: isGroupView ? 72 : 48,
+                    topPadding: isGroupView ? 52 : 40,
+                    viewScope: scope,
+                    fitScaleRef,
+                });
+                if (key) saveStoredViewport(key, network);
+            }, animate ? 400 : 0);
         },
-        [runProgrammaticMove, captureFitScale],
+        [runProgrammaticMove, currentViewportKey, getFitExcludeIds],
     );
 
     const zoomBy = useCallback(
@@ -306,9 +406,10 @@ export default function Graph({
             runProgrammaticMove(() => {
                 zoomAtDomPoint(network, anchorDom, factor, canvasSize, limits);
                 nudgeGraphIntoView();
+                schedulePersistViewport();
             }, 220);
         },
-        [runProgrammaticMove, getZoomLimits, nudgeGraphIntoView],
+        [runProgrammaticMove, getZoomLimits, nudgeGraphIntoView, schedulePersistViewport],
     );
 
     const focusNodeById = useCallback(
@@ -354,6 +455,10 @@ export default function Graph({
             edgesDS.current.clear();
 
             if (isGroupView) {
+                const layout = layoutGroups(data.groups, data.groupEdges, {
+                    editMode: editModeRef.current,
+                });
+                nodeLayoutRef.current = layout;
                 const { nodes, edges } = buildGroupSuperGraph(
                     data.groups,
                     data.groupEdges,
@@ -361,14 +466,15 @@ export default function Graph({
                     activeGroupIdRef.current,
                     connectSourceGroupIdRef.current,
                     editModeRef.current,
+                    layout,
                 );
-                const positions = layoutGroups(data.groups, data.groupEdges);
-                nodeLayoutRef.current = positions;
                 nodesDS.current.add(nodes);
                 edgesDS.current.add(edges);
             } else if (groupId) {
                 const { nodes, edges } = filterGraphByGroup(data.nodes, data.edges, groupId);
-                const layout = layoutTopicsInGroup(nodes, edges);
+                const layout = layoutTopicsInGroup(nodes, edges, {
+                    editMode: editModeRef.current,
+                });
                 nodeLayoutRef.current = layout;
                 nodesDS.current.add(
                     styledTopicNodes(
@@ -381,15 +487,15 @@ export default function Graph({
                     ),
                 );
                 edgesDS.current.add(
-                    editModeRef.current ? styledTopicEdges(edges) : edges,
+                    editModeRef.current ? styledTopicEdges(edges, true) : edges,
                 );
             }
 
             if (viewChanged && animate && nodesDS.current.length > 0) {
-                requestAnimationFrame(() => fitView(true, isGroupView ? 88 : 56));
+                requestAnimationFrame(() => applyViewportForView(true));
             }
         },
-        [fitView],
+        [applyViewportForView],
     );
 
     const highlightTopicNode = useCallback((nodeId: number) => {
@@ -404,51 +510,124 @@ export default function Graph({
             nodeId,
             prevActiveNodeIdRef.current,
             connectSourceIdRef.current,
+            editModeRef.current,
         );
         prevActiveNodeIdRef.current = nodeId;
     }, []);
 
-    const patchGroupStyles = useCallback(() => {
+    const patchGroupStyles = useCallback((fullLayout = false) => {
         const data = payloadRef.current;
         if (!data || !nodesDS.current || !edgesDS.current || viewScopeRef.current !== 'groups') {
             return;
         }
 
         const isDark = themeRef.current === 'dark';
-        const { nodes, edges } = buildGroupSuperGraph(
+        const styleOnly = editModeRef.current && !fullLayout;
+
+        let layout: Map<string, { x: number; y: number }>;
+        if (styleOnly) {
+            layout = new Map(nodeLayoutRef.current);
+            const computed = layoutGroups(data.groups, data.groupEdges, { editMode: true });
+            const groupIds = new Set(data.groups.map((g) => g.id));
+            for (const g of data.groups) {
+                if (!layout.has(g.id)) {
+                    layout.set(g.id, computed.get(g.id) ?? { x: 0, y: 0 });
+                }
+            }
+            for (const id of [...layout.keys()]) {
+                if (!groupIds.has(String(id))) layout.delete(id);
+            }
+        } else {
+            layout = layoutGroups(data.groups, data.groupEdges, {
+                editMode: editModeRef.current,
+            });
+        }
+        nodeLayoutRef.current = layout;
+
+        const styled = buildGroupSuperGraph(
             data.groups,
             data.groupEdges,
             isDark,
             activeGroupIdRef.current,
             connectSourceGroupIdRef.current,
             editModeRef.current,
+            layout,
         );
-        nodesDS.current.update(nodes);
+
+        if (styleOnly) {
+            nodesDS.current.update(
+                styled.nodes.map((node) => {
+                    const { x: _x, y: _y, ...visual } = node as {
+                        x?: number;
+                        y?: number;
+                        id: string;
+                    };
+                    return { ...visual, fixed: false };
+                }),
+            );
+        } else {
+            nodesDS.current.update(styled.nodes);
+        }
+
         edgesDS.current.clear();
-        edgesDS.current.add(edges);
+        edgesDS.current.add(styled.edges);
     }, []);
 
-    const patchTopicStyles = useCallback(() => {
+    const patchTopicStyles = useCallback((fullLayout = false) => {
         const data = payloadRef.current;
         const groupId = selectedGroupIdRef.current;
         if (!data || !nodesDS.current || viewScopeRef.current !== 'topics' || !groupId) return;
 
         const { nodes, edges } = filterGraphByGroup(data.nodes, data.edges, groupId);
-        const layout = layoutTopicsInGroup(nodes, edges);
+        const styleOnly = editModeRef.current && !fullLayout;
+
+        let layout: Map<number, { x: number; y: number }>;
+        if (styleOnly) {
+            layout = new Map(nodeLayoutRef.current);
+            const computed = layoutTopicsInGroup(nodes, edges, { editMode: true });
+            const nodeIds = new Set(nodes.map((n) => n.id));
+            for (const n of nodes) {
+                if (!layout.has(n.id)) {
+                    layout.set(n.id, computed.get(n.id) ?? { x: 0, y: 0 });
+                }
+            }
+            for (const id of [...layout.keys()]) {
+                if (!nodeIds.has(id as number)) layout.delete(id);
+            }
+        } else {
+            layout = layoutTopicsInGroup(nodes, edges, {
+                editMode: editModeRef.current,
+            });
+        }
         nodeLayoutRef.current = layout;
-        nodesDS.current.update(
-            styledTopicNodes(
-                nodes,
-                layout,
-                activeNodeIdRef.current,
-                themeRef.current === 'dark',
-                connectSourceIdRef.current,
-                editModeRef.current,
-            ),
+
+        const styled = styledTopicNodes(
+            nodes,
+            layout,
+            activeNodeIdRef.current,
+            themeRef.current === 'dark',
+            connectSourceIdRef.current,
+            editModeRef.current,
         );
+
+        if (styleOnly) {
+            nodesDS.current.update(
+                styled.map((node) => {
+                    const { x: _x, y: _y, ...visual } = node as {
+                        x?: number;
+                        y?: number;
+                        id: number;
+                    };
+                    return { ...visual, fixed: false };
+                }),
+            );
+        } else {
+            nodesDS.current.update(styled);
+        }
+
         edgesDS.current.clear();
         edgesDS.current.add(
-            editModeRef.current ? styledTopicEdges(edges) : edges,
+            editModeRef.current ? styledTopicEdges(edges, true) : edges,
         );
     }, []);
 
@@ -480,6 +659,7 @@ export default function Graph({
                     nodeId,
                     prevActiveNodeIdRef.current,
                     nodeId,
+                    editModeRef.current,
                 );
                 prevActiveNodeIdRef.current = nodeId;
                 activeNodeIdRef.current = nodeId;
@@ -524,6 +704,7 @@ export default function Graph({
                         prevActiveGroupIdRef.current,
                         groupId,
                         themeRef.current === 'dark',
+                        editModeRef.current,
                     );
                     prevActiveGroupIdRef.current = groupId;
                     return;
@@ -548,6 +729,7 @@ export default function Graph({
                 prevActiveGroupIdRef.current,
                 connectSourceGroupIdRef.current,
                 themeRef.current === 'dark',
+                editModeRef.current,
             );
             prevActiveGroupIdRef.current = groupId;
             return;
@@ -571,20 +753,39 @@ export default function Graph({
         );
         networkRef.current = network;
 
+        const pickEdgeAtPointer = (net: Network, pointer: { x: number; y: number }) => {
+            const edgeId = net.getEdgeAt(pointer);
+            if (edgeId == null) return false;
+            net.unselectAll();
+            net.selectEdges([edgeId]);
+            onClearSelectionRef.current?.();
+            return true;
+        };
+
         network.on('dragStart', (params) => {
             isDraggingViewRef.current = !(params.nodes && params.nodes.length > 0);
         });
         network.on('dragEnd', (params) => {
             if (params.nodes && params.nodes.length > 0 && editModeRef.current) {
+                skipNodePickRef.current = true;
                 const positions = network.getPositions(params.nodes);
                 for (const rawId of params.nodes) {
                     const pos = positions[rawId];
                     if (!pos) continue;
+                    if (isGroupNodeId(rawId)) {
+                        const groupId = groupIdFromNodeId(String(rawId));
+                        nodeLayoutRef.current.set(groupId, { x: pos.x, y: pos.y });
+                        onGroupPositionChangeRef.current?.(groupId, pos.x, pos.y);
+                        continue;
+                    }
                     const nodeId = typeof rawId === 'number' ? rawId : Number(rawId);
                     if (!Number.isNaN(nodeId)) {
+                        nodeLayoutRef.current.set(nodeId, { x: pos.x, y: pos.y });
                         onNodePositionChangeRef.current?.(nodeId, pos.x, pos.y);
                     }
                 }
+            } else if (isDraggingViewRef.current) {
+                persistUserViewport();
             }
             isDraggingViewRef.current = false;
         });
@@ -592,6 +793,12 @@ export default function Graph({
         const tryPickAtClient = (clientX: number, clientY: number) => {
             if (viewScopeRef.current === 'groups') return;
 
+            if (skipNodePickRef.current) {
+                skipNodePickRef.current = false;
+                pointerDownRef.current = null;
+                return;
+            }
+
             const down = pointerDownRef.current;
             pointerDownRef.current = null;
             if (!down) return;
@@ -601,11 +808,26 @@ export default function Graph({
             if (!net) return;
 
             const rect = container.getBoundingClientRect();
-            const nodeId = net.getNodeAt({
-                x: clientX - rect.left,
-                y: clientY - rect.top,
-            });
+            const pointer = { x: clientX - rect.left, y: clientY - rect.top };
+
+            if (editModeRef.current && !connectModeRef.current) {
+                if (pickEdgeAtPointer(net, pointer)) return;
+
+                const nodeAt = net.getNodeAt(pointer);
+                if (nodeAt == null) {
+                    net.unselectAll();
+                    onClearSelectionRef.current?.();
+                    return;
+                }
+            }
+
+            const nodeId = net.getNodeAt(pointer);
             if (nodeId == null) return;
+
+            if (editModeRef.current && !connectModeRef.current) {
+                net.unselectAll();
+                net.selectNodes([nodeId]);
+            }
 
             handleNodePickRef.current(nodeId);
         };
@@ -613,6 +835,12 @@ export default function Graph({
         const tryPickGroupAtClient = (clientX: number, clientY: number) => {
             if (viewScopeRef.current !== 'groups') return;
 
+            if (skipNodePickRef.current) {
+                skipNodePickRef.current = false;
+                pointerDownRef.current = null;
+                return;
+            }
+
             const down = pointerDownRef.current;
             pointerDownRef.current = null;
             if (!down) return;
@@ -622,17 +850,46 @@ export default function Graph({
             if (!net) return;
 
             const rect = container.getBoundingClientRect();
-            const nodeId = net.getNodeAt({
-                x: clientX - rect.left,
-                y: clientY - rect.top,
-            });
+            const pointer = { x: clientX - rect.left, y: clientY - rect.top };
+
+            if (editModeRef.current && !connectModeRef.current) {
+                if (pickEdgeAtPointer(net, pointer)) return;
+
+                const nodeAt = net.getNodeAt(pointer);
+                if (nodeAt == null) {
+                    net.unselectAll();
+                    onClearSelectionRef.current?.();
+                    return;
+                }
+            }
+
+            const nodeId = net.getNodeAt(pointer);
             if (nodeId == null || !isGroupNodeId(nodeId)) return;
+
+            if (editModeRef.current && !connectModeRef.current) {
+                net.unselectAll();
+                net.selectNodes([nodeId]);
+            }
 
             handleGroupPickRef.current(groupIdFromNodeId(String(nodeId)));
         };
 
         network.on('click', (params) => {
             if (viewScopeRef.current === 'groups') {
+                if (
+                    editModeRef.current &&
+                    !connectModeRef.current &&
+                    params.edges &&
+                    params.edges.length > 0
+                ) {
+                    skipNodePickRef.current = true;
+                    network.unselectAll();
+                    network.selectEdges(params.edges);
+                    onClearSelectionRef.current?.();
+                    pointerDownRef.current = null;
+                    return;
+                }
+
                 if (
                     editModeRef.current &&
                     connectModeRef.current &&
@@ -651,6 +908,32 @@ export default function Graph({
 
             if (
                 editModeRef.current &&
+                !connectModeRef.current &&
+                params.edges &&
+                params.edges.length > 0
+            ) {
+                skipNodePickRef.current = true;
+                network.unselectAll();
+                network.selectEdges(params.edges);
+                onClearSelectionRef.current?.();
+                pointerDownRef.current = null;
+                return;
+            }
+
+            if (
+                editModeRef.current &&
+                !connectModeRef.current &&
+                (!params.nodes || params.nodes.length === 0) &&
+                (!params.edges || params.edges.length === 0)
+            ) {
+                network.unselectAll();
+                onClearSelectionRef.current?.();
+                pointerDownRef.current = null;
+                return;
+            }
+
+            if (
+                editModeRef.current &&
                 connectModeRef.current &&
                 (!params.nodes || params.nodes.length === 0) &&
                 (!params.edges || params.edges.length === 0)
@@ -662,15 +945,27 @@ export default function Graph({
         const onKeyDown = (e: KeyboardEvent) => {
             if (!editModeRef.current) return;
             if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+            if (isEditableTarget(e.target)) return;
+
             const net = networkRef.current;
             const eds = edgesDS.current;
             if (!net || !eds) return;
-            const selected = net.getSelectedEdges();
-            if (!selected.length) return;
+
+            const selectedEdges = net.getSelectedEdges();
+            const selectedNodes = net.getSelectedNodes();
+
+            if (selectedEdges.length === 0 && selectedNodes.length === 0) return;
+
             e.preventDefault();
+            e.stopPropagation();
+
+            if (selectedEdges.length === 0) {
+                // Del з обраним вузлом — не видаляємо вузол з клавіатури (лише кнопка в панелі)
+                return;
+            }
 
             if (viewScopeRef.current === 'groups') {
-                const toDelete = selected.map((edgeId) => {
+                const toDelete = selectedEdges.map((edgeId) => {
                     const edge = eds.get(edgeId) as { from: string; to: string };
                     return {
                         from: groupIdFromNodeId(String(edge.from)),
@@ -681,15 +976,19 @@ export default function Graph({
                     };
                 });
                 onGroupEdgesDeleteRef.current?.(toDelete);
+                eds.remove(selectedEdges);
+                net.unselectAll();
                 return;
             }
 
             if (viewScopeRef.current !== 'topics') return;
-            const toDelete = selected.map((edgeId) => {
+            const toDelete = selectedEdges.map((edgeId) => {
                 const edge = eds.get(edgeId) as { from: number; to: number };
                 return { from: Number(edge.from), to: Number(edge.to), id: String(edgeId) };
             });
             onEdgesDeleteRef.current?.(toDelete);
+            eds.remove(selectedEdges);
+            net.unselectAll();
         };
         window.addEventListener('keydown', onKeyDown);
 
@@ -739,6 +1038,7 @@ export default function Graph({
 
             zoomAtDomPoint(net, pointer, factor, canvasSize, getZoomLimits());
             nudgeGraphIntoView();
+            schedulePersistViewport();
         };
 
         container.addEventListener('wheel', handleWheel, { passive: false });
@@ -750,6 +1050,9 @@ export default function Graph({
         window.__fitGraphView = () => fitView();
 
         return () => {
+            if (saveViewportTimerRef.current != null) {
+                window.clearTimeout(saveViewportTimerRef.current);
+            }
             container.removeEventListener('wheel', handleWheel);
             container.removeEventListener('mousedown', onMouseDown);
             container.removeEventListener('mouseup', onMouseUp);
@@ -763,7 +1066,7 @@ export default function Graph({
             nodesDS.current = null;
             edgesDS.current = null;
         };
-    }, [fitView, focusNodeById, highlightTopicNode, getZoomLimits, nudgeGraphIntoView]);
+    }, [fitView, focusNodeById, highlightTopicNode, getZoomLimits, nudgeGraphIntoView, schedulePersistViewport, persistUserViewport]);
 
     // Оновлення даних / перемикання scope
     useEffect(() => {
@@ -776,12 +1079,12 @@ export default function Graph({
             nodesDS.current.length > 0;
 
         if (sameView && viewScope === 'groups') {
-            patchGroupStyles();
+            patchGroupStyles(true);
             return;
         }
 
         if (sameView && viewScope === 'topics') {
-            patchTopicStyles();
+            patchTopicStyles(true);
             return;
         }
 
@@ -800,13 +1103,14 @@ export default function Graph({
             prevActiveGroupIdRef.current,
             connectSourceGroupId,
             themeRef.current === 'dark',
+            editModeRef.current,
         );
         prevActiveGroupIdRef.current = activeGroupId;
     }, [activeGroupId, viewScope, payload, connectSourceGroupId]);
 
     useEffect(() => {
         if (viewScope !== 'groups' || !nodesDS.current) return;
-        patchGroupStyles();
+        patchGroupStyles(true);
     }, [connectSourceGroupId, connectMode, editMode, viewScope, patchGroupStyles]);
 
     // Підсвітка обраної теми (без повторного фокусу камери)
@@ -820,7 +1124,7 @@ export default function Graph({
 
     useEffect(() => {
         if (viewScope !== 'topics' || !nodesDS.current) return;
-        patchTopicStyles();
+        patchTopicStyles(true);
     }, [connectSourceId, connectMode, editMode, viewScope, patchTopicStyles]);
 
     useEffect(() => {
@@ -835,19 +1139,21 @@ export default function Graph({
                 viewScope === 'groups',
             ),
         );
-        if (viewScope === 'topics') {
-            patchTopicStyles();
-        } else if (viewScope === 'groups') {
-            patchGroupStyles();
-        }
-    }, [theme, editMode, viewScope, selectedGroupId, payload, patchTopicStyles, patchGroupStyles]);
+    }, [theme, editMode, viewScope, selectedGroupId, payload]);
 
     useEffect(() => {
         const el = shellRef.current;
         if (!el) return;
 
         let raf = 0;
-        const ro = new ResizeObserver(() => {
+        let lastW = 0;
+        let lastH = 0;
+        const ro = new ResizeObserver((entries) => {
+            const rect = entries[0]?.contentRect;
+            if (!rect) return;
+            if (Math.abs(rect.width - lastW) < 1 && Math.abs(rect.height - lastH) < 1) return;
+            lastW = rect.width;
+            lastH = rect.height;
             cancelAnimationFrame(raf);
             raf = requestAnimationFrame(() => networkRef.current?.redraw());
         });
@@ -871,7 +1177,7 @@ export default function Graph({
                 activeNodeTitle={activeNodeTitle}
                 editMode={editMode}
                 connectMode={connectMode}
-                onFit={() => fitView(true, viewScope === 'groups' ? 88 : 56)}
+                onFit={() => fitView(true)}
                 onRecenter={() => {
                     const id = activeNodeIdRef.current;
                     if (id != null) focusNodeById(id, true);

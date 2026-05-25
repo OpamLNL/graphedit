@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import NodeEditorPanel from '../components/FlowEditor/NodeEditorPanel';
 import Graph, {
@@ -10,13 +10,19 @@ import {
     allocateTempEdgeId,
     allocateTempNodeId,
     autoLayoutEditorGroup,
+    applyPendingNodePositions,
+    buildEditorSaveSnapshot,
     editorStateToBulkSave,
     editorStateToGraphPayload,
     initEditorState,
+    type EditorSaveSnapshot,
     type EditorState,
     type GroupEdgeState,
     type KnowledgeNodeData,
 } from '../components/FlowEditor/layoutUtils';
+import { layoutTopicGraphByEdges } from '../utils/graphLayout';
+import { mergeGroupLayouts } from '../utils/groupGraph';
+import type { GroupGraphResponse } from '../api/nodes';
 import {
     knowledgeMapsApi,
     type GraphValidationResult,
@@ -26,6 +32,21 @@ import { nodesApi } from '../api/nodes';
 import { topicsApi, type Topic } from '../api/topics';
 import { ApiError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+
+function groupLayoutOverridesFromMeta(
+    groupMeta: GroupGraphResponse | null | undefined,
+): Record<string, { x: number; y: number }> {
+    const overrides: Record<string, { x: number; y: number }> = {};
+    for (const g of groupMeta?.groups ?? []) {
+        if (g.x != null && g.y != null) {
+            overrides[g.id] = { x: Math.round(g.x), y: Math.round(g.y) };
+        }
+    }
+    for (const [id, pos] of Object.entries(groupMeta?.groupLayout ?? {})) {
+        overrides[id] = { x: Math.round(pos.x), y: Math.round(pos.y) };
+    }
+    return overrides;
+}
 
 function parseApiError(e: unknown): string {
     if (e instanceof ApiError) {
@@ -68,18 +89,33 @@ export default function EditorPage() {
     const [statusMsg, setStatusMsg] = useState<string | null>(null);
     const [viewScope, setViewScope] = useState<GraphViewScope>('groups');
     const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-    const [connectMode, setConnectMode] = useState(true);
+    const [connectMode, setConnectMode] = useState(false);
     const [showRightPanel, setShowRightPanel] = useState(true);
+    const [groupLayoutOverrides, setGroupLayoutOverrides] = useState<
+        Record<string, { x: number; y: number }>
+    >({});
+    const saveSnapshotRef = useRef<EditorSaveSnapshot | null>(null);
+    const editorStateRef = useRef<EditorState | null>(null);
+    const pendingNodePositionsRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+    const dirtyNodeIdsRef = useRef<Set<number>>(new Set());
+    const dirtyEdgeKeysRef = useRef<Set<string>>(new Set());
 
     const isEditor = role === 'admin' || role === 'teacher';
     const topicById = useMemo(() => new Map(topics.map((t) => [t.id, t])), [topics]);
 
+    editorStateRef.current = editorState;
+
     useEffect(() => {
-        if (!user || !isEditor || !mapId || Number.isNaN(mapId)) {
+        if (authLoading || !user || !mapId || Number.isNaN(mapId)) {
+            if (!authLoading) setLoading(false);
+            return;
+        }
+        if (!isEditor) {
             setLoading(false);
             return;
         }
 
+        let cancelled = false;
         setLoading(true);
         Promise.all([
             knowledgeMapsApi.getOne(mapId),
@@ -88,19 +124,37 @@ export default function EditorPage() {
             nodesApi.getGroupGraph(mapId).catch(() => null),
         ])
             .then(([m, g, t, groupMeta]) => {
+                if (cancelled) return;
                 setMap(m);
                 setTopics(t);
                 const tMap = new Map(t.map((topic) => [topic.id, topic]));
-                setEditorState(initEditorState(g, tMap));
-                setGroups(groupMeta?.groups ?? []);
-                setGroupEdges(
-                    (groupMeta?.groupEdges ?? []).map((e) => ({
-                        id: e.id,
-                        from: e.from,
-                        to: e.to,
-                        type: e.type,
-                    })),
+                const nextState = initEditorState(g, tMap);
+                const nextGroups = groupMeta?.groups ?? [];
+                const nextOverrides = groupLayoutOverridesFromMeta(groupMeta);
+                const nextGroupEdges = (groupMeta?.groupEdges ?? []).map((e) => ({
+                    id: e.id,
+                    from: e.from,
+                    to: e.to,
+                    type: e.type,
+                }));
+                setEditorState(nextState);
+                setGroups(nextGroups);
+                setGroupLayoutOverrides(nextOverrides);
+                setGroupEdges(nextGroupEdges);
+                saveSnapshotRef.current = buildEditorSaveSnapshot(
+                    nextState,
+                    nextGroupEdges,
+                    mergeGroupLayouts(
+                        nextGroups.length > 0
+                            ? nextGroups
+                            : editorStateToGraphPayload(nextState, nextGroups, nextGroupEdges, tMap)
+                                  .groups,
+                        nextOverrides,
+                    ),
                 );
+                pendingNodePositionsRef.current.clear();
+                dirtyNodeIdsRef.current.clear();
+                dirtyEdgeKeysRef.current.clear();
                 setDeletedNodeIds([]);
                 setDeletedEdgeIds([]);
                 setDeletedGroupEdgeIds([]);
@@ -109,21 +163,33 @@ export default function EditorPage() {
                 setViewScope('groups');
                 setSelectedGroupId(null);
                 setActiveGroupId(null);
-                setConnectMode(true);
+                setConnectMode(false);
                 setConnectSourceId(null);
                 setConnectSourceGroupId(null);
             })
             .catch((e) => {
+                if (cancelled) return;
                 console.error(e);
                 setStatusMsg(parseApiError(e));
             })
-            .finally(() => setLoading(false));
-    }, [user, isEditor, mapId]);
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [user, isEditor, mapId, authLoading]);
 
     const graphPayload = useMemo((): GraphPayload | null => {
         if (!editorState) return null;
-        return editorStateToGraphPayload(editorState, groups, groupEdges, topicById);
-    }, [editorState, groups, groupEdges, topicById]);
+        const payload = editorStateToGraphPayload(editorState, groups, groupEdges, topicById);
+        if (Object.keys(groupLayoutOverrides).length === 0) return payload;
+        return {
+            ...payload,
+            groups: mergeGroupLayouts(payload.groups, groupLayoutOverrides),
+        };
+    }, [editorState, groups, groupEdges, topicById, groupLayoutOverrides]);
 
     const resolvedGroups = graphPayload?.groups ?? groups;
 
@@ -150,6 +216,11 @@ export default function EditorPage() {
         };
     }, [activeNodeId, editorState]);
 
+    const handleClearSelection = useCallback(() => {
+        setActiveNodeId(null);
+        setConnectSourceId(null);
+    }, []);
+
     const markDirty = useCallback(() => setDirty(true), []);
 
     const handleValidate = async () => {
@@ -168,32 +239,63 @@ export default function EditorPage() {
     };
 
     const handleSave = async () => {
-        if (!mapId || !editorState) return;
+        const currentEditorState = editorStateRef.current;
+        if (!mapId || !currentEditorState) return;
         setSaving(true);
         setStatusMsg(null);
         try {
+            const stateForSave = applyPendingNodePositions(
+                currentEditorState,
+                pendingNodePositionsRef.current,
+            );
+            const groupsForSave =
+                graphPayload?.groups ?? mergeGroupLayouts(groups, groupLayoutOverrides);
             const payload = editorStateToBulkSave(
-                editorState,
+                stateForSave,
                 groupEdges,
+                groupsForSave,
                 deletedNodeIds,
                 deletedEdgeIds,
                 deletedGroupEdgeIds,
+                saveSnapshotRef.current,
+                dirtyNodeIdsRef.current,
+                dirtyEdgeKeysRef.current,
             );
             const saved = await knowledgeMapsApi.saveGraph(mapId, payload);
             const tMap = new Map(topics.map((t) => [t.id, t]));
-            setEditorState(initEditorState(saved, tMap));
+            const nextState = initEditorState(saved, tMap);
+            setEditorState(nextState);
             const groupMeta = await nodesApi.getGroupGraph(mapId).catch(() => null);
+            let nextGroups = groups;
+            let nextOverrides = groupLayoutOverrides;
+            let nextGroupEdges = groupEdges;
             if (groupMeta) {
-                setGroups(groupMeta.groups ?? []);
-                setGroupEdges(
-                    (groupMeta.groupEdges ?? []).map((e) => ({
-                        id: e.id,
-                        from: e.from,
-                        to: e.to,
-                        type: e.type,
-                    })),
-                );
+                nextGroups = groupMeta.groups ?? [];
+                nextOverrides = groupLayoutOverridesFromMeta(groupMeta);
+                nextGroupEdges = (groupMeta.groupEdges ?? []).map((e) => ({
+                    id: e.id,
+                    from: e.from,
+                    to: e.to,
+                    type: e.type,
+                }));
+                setGroups(nextGroups);
+                setGroupLayoutOverrides(nextOverrides);
+                setGroupEdges(nextGroupEdges);
             }
+            saveSnapshotRef.current = buildEditorSaveSnapshot(
+                nextState,
+                nextGroupEdges,
+                mergeGroupLayouts(
+                    nextGroups.length > 0
+                        ? nextGroups
+                        : editorStateToGraphPayload(nextState, nextGroups, nextGroupEdges, tMap)
+                              .groups,
+                    nextOverrides,
+                ),
+            );
+            pendingNodePositionsRef.current.clear();
+            dirtyNodeIdsRef.current.clear();
+            dirtyEdgeKeysRef.current.clear();
             setDeletedNodeIds([]);
             setDeletedEdgeIds([]);
             setDeletedGroupEdgeIds([]);
@@ -203,7 +305,7 @@ export default function EditorPage() {
             setStatusMsg('Збережено');
         } catch (e) {
             console.error(e);
-            setStatusMsg(parseApiError(e));
+            setStatusMsg(`Помилка збереження: ${parseApiError(e)}`);
         } finally {
             setSaving(false);
         }
@@ -232,7 +334,7 @@ export default function EditorPage() {
         setActiveNodeId(null);
         setConnectSourceId(null);
         setConnectSourceGroupId(null);
-        setConnectMode(true);
+        setConnectMode(false);
     };
 
     const handleSelectGroupTab = (groupId: string) => {
@@ -250,7 +352,7 @@ export default function EditorPage() {
         setActiveNodeId(null);
         setConnectSourceId(null);
         setConnectSourceGroupId(null);
-        setConnectMode(true);
+        setConnectMode(false);
     };
 
     const handleConnectNodes = (fromId: number, toId: number) => {
@@ -275,6 +377,7 @@ export default function EditorPage() {
                   }
                 : prev,
         );
+        dirtyEdgeKeysRef.current.add(`${fromId}-${toId}`);
         markDirty();
     };
 
@@ -331,14 +434,15 @@ export default function EditorPage() {
 
     const handleNodePositionChange = useCallback(
         (nodeId: number, x: number, y: number) => {
+            const pos = { x: Math.round(x), y: Math.round(y) };
+            pendingNodePositionsRef.current.set(nodeId, pos);
+            dirtyNodeIdsRef.current.add(nodeId);
             setEditorState((prev) =>
                 prev
                     ? {
                           ...prev,
                           nodes: prev.nodes.map((n) =>
-                              n.id === nodeId
-                                  ? { ...n, x: Math.round(x), y: Math.round(y) }
-                                  : n,
+                              n.id === nodeId ? { ...n, ...pos } : n,
                           ),
                       }
                     : prev,
@@ -348,9 +452,40 @@ export default function EditorPage() {
         [markDirty],
     );
 
+    const handleGroupPositionChange = useCallback(
+        (groupId: string, x: number, y: number) => {
+            const pos = { x: Math.round(x), y: Math.round(y) };
+            setGroupLayoutOverrides((prev) => ({ ...prev, [groupId]: pos }));
+            setGroups((prev) => {
+                const found = prev.some((g) => g.id === groupId);
+                if (!found) return prev;
+                return prev.map((g) => (g.id === groupId ? { ...g, ...pos } : g));
+            });
+            markDirty();
+        },
+        [markDirty],
+    );
+
     const handleAddNode = () => {
-        if (!selectedGroupId) return;
+        if (!selectedGroupId || !editorState) return;
         const id = allocateTempNodeId();
+        const groupNodes = editorState.nodes.filter((n) => n.groupId === selectedGroupId);
+        const ids = new Set(groupNodes.map((n) => n.id));
+        const groupEdges = editorState.edges.filter(
+            (e) => ids.has(e.fromNodeId) && ids.has(e.toNodeId),
+        );
+        const allIds = [...groupNodes.map((n) => n.id), id];
+        const sortKeys = new Map<number, number>(
+            groupNodes.map((n) => [n.id, n.topicId ?? n.id]),
+        );
+        sortKeys.set(id, id);
+        const pos =
+            layoutTopicGraphByEdges(
+                allIds,
+                groupEdges.map((e) => ({ from: e.fromNodeId, to: e.toNodeId })),
+                sortKeys,
+            ).get(id) ?? { x: 0, y: 0 };
+
         setEditorState((prev) =>
             prev
                 ? {
@@ -361,8 +496,8 @@ export default function EditorPage() {
                               id,
                               title: 'Новий вузол',
                               topicId: null,
-                              x: 0,
-                              y: 0,
+                              x: pos.x,
+                              y: pos.y,
                               color: '#6366f1',
                               groupId: selectedGroupId,
                           },
@@ -370,13 +505,20 @@ export default function EditorPage() {
                   }
                 : prev,
         );
+        dirtyNodeIdsRef.current.add(id);
         setActiveNodeId(id);
         markDirty();
     };
 
     const handleAutoLayout = () => {
         if (!selectedGroupId || !editorState) return;
-        setEditorState(autoLayoutEditorGroup(editorState, selectedGroupId));
+        const next = autoLayoutEditorGroup(editorState, selectedGroupId);
+        for (const n of next.nodes) {
+            if (n.groupId === selectedGroupId) {
+                dirtyNodeIdsRef.current.add(n.id);
+            }
+        }
+        setEditorState(next);
         markDirty();
     };
 
@@ -409,6 +551,7 @@ export default function EditorPage() {
                   }
                 : prev,
         );
+        dirtyNodeIdsRef.current.add(activeNodeId);
         markDirty();
     };
 
@@ -516,7 +659,11 @@ export default function EditorPage() {
                             <span><strong className="text-secondary">{groupEdgeCount}</strong> ребер груп</span>
                             {validation && (
                                 <span className={`badge badge-xs ${validation.valid ? 'badge-success' : 'badge-error'}`}>
-                                    {validation.valid ? 'DAG ✓' : `${validation.errors.length} помилок`}
+                                    {validation.valid
+                                        ? validation.warnings.length > 0
+                                            ? `OK · ${validation.warnings.length} застер.`
+                                            : 'OK ✓'
+                                        : `${validation.errors.length} помилок`}
                                 </span>
                             )}
                         </div>
@@ -621,16 +768,23 @@ export default function EditorPage() {
                     {viewScope === 'groups'
                         ? connectMode
                             ? 'Групи: клік початкова → клік кінцева · Del — ребро · «У групу →» — теми всередині'
-                            : 'Групи: клік — обрати · «У групу →» — редагування тем · «Зʼєднання ✓» — ребро між групами'
+                            : 'Групи: клік — обрати · клік стрілки — обрати ребро · Del — видалити ребро · «Зʼєднання ✓» — нове ребро · «У групу →» — теми'
                         : connectMode
                           ? 'Теми: клік початковий → клік кінцевий вузол · Del — видалити ребро · «Зберегти»'
-                          : 'Теми: клік — обрати вузол · «Зʼєднання ✓» — ребро двома кліками'}
+                          : 'Теми: клік — обрати вузол · клік стрілки — обрати ребро · Del — видалити ребро · «Зʼєднання ✓» — нове ребро'}
                 </p>
 
                 {statusMsg && (
                     <p className="text-xs text-center opacity-60 max-w-2xl mx-auto truncate" title={statusMsg}>
                         {statusMsg}
                     </p>
+                )}
+                {validation && validation.warnings.length > 0 && (
+                    <ul className="text-xs text-warning max-w-3xl mx-auto space-y-0.5">
+                        {validation.warnings.slice(0, 3).map((warn) => (
+                            <li key={warn}>⚠ {warn}</li>
+                        ))}
+                    </ul>
                 )}
                 {validation && !validation.valid && (
                     <ul className="text-xs text-error max-w-3xl mx-auto space-y-0.5">
@@ -669,7 +823,10 @@ export default function EditorPage() {
                                 onEdgesDelete={handleEdgesDelete}
                                 onGroupEdgesDelete={handleGroupEdgesDelete}
                                 onNodePositionChange={handleNodePositionChange}
+                                onGroupPositionChange={handleGroupPositionChange}
                                 onBackToGroups={handleBackToGroups}
+                                onClearSelection={handleClearSelection}
+                                viewportStorageId={mapId}
                             />
                         </div>
                     )}

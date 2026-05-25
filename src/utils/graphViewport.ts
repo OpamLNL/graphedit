@@ -86,6 +86,82 @@ export function clampScale(scale: number, limits: ZoomLimits): number {
     return Math.min(limits.max, Math.max(limits.min, scale));
 }
 
+export function layoutEntriesExcluding(
+    layout: Map<number | string, { x: number; y: number }>,
+    excludeIds?: Set<string>,
+): Map<number | string, { x: number; y: number }> {
+    if (!excludeIds || excludeIds.size === 0) return layout;
+    const filtered = new Map<number | string, { x: number; y: number }>();
+    for (const [id, pos] of layout) {
+        if (!excludeIds.has(String(id))) filtered.set(id, pos);
+    }
+    return filtered.size > 0 ? filtered : layout;
+}
+
+/** Масштаб від основного графа, якір — зверху (без орієнтації на хвостові вузли) */
+export function fitViewTopAnchored(
+    network: ViewportNetwork,
+    layout: Map<number | string, { x: number; y: number }>,
+    canvasSize: CanvasSize,
+    options: {
+        excludeIds?: Set<string>;
+        padding?: number;
+        topPadding?: number;
+        viewScope?: 'groups' | 'topics';
+        fitScaleRef?: { current: number };
+    } = {},
+): number {
+    const {
+        excludeIds,
+        padding = 56,
+        topPadding = 44,
+        viewScope = 'topics',
+        fitScaleRef,
+    } = options;
+
+    const filtered = layoutEntriesExcluding(layout, excludeIds);
+    const bounds = contentBoundsFromLayout(filtered, padding);
+    if (!bounds) return network.getScale();
+
+    const contentW = Math.max(bounds.maxX - bounds.minX, 80);
+    const contentH = Math.max(bounds.maxY - bounds.minY, 80);
+
+    const fitScale = fitScaleRef?.current ?? DEFAULT_FOCUS_SCALE;
+    const limits = limitsFromFitScale(fitScale, viewScope);
+
+    const scaleX = (canvasSize.width - padding * 2) / contentW;
+    const scaleY = (canvasSize.height - topPadding - padding) / contentH;
+    let scale = Math.min(scaleX, scaleY, viewScope === 'groups' ? 1.05 : 1.15);
+    scale = clampScale(scale, limits);
+
+    network.moveTo({
+        position: { x: bounds.cx, y: bounds.minY },
+        scale,
+        offset: {
+            x: 0,
+            y: topPadding - canvasSize.height / 2,
+        },
+        animation: false,
+    });
+
+    if (fitScaleRef) fitScaleRef.current = scale;
+    return scale;
+}
+
+export function applyStoredViewport(
+    network: ViewportNetwork,
+    stored: { scale: number; position: { x: number; y: number } },
+    animate = false,
+): void {
+    network.moveTo({
+        position: stored.position,
+        scale: stored.scale,
+        animation: animate
+            ? { duration: 280, easingFunction: 'easeInOutQuad' }
+            : false,
+    });
+}
+
 export function contentBoundsFromLayout(
     layout: Map<number | string, { x: number; y: number }>,
     padding = 100,

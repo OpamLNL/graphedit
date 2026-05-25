@@ -15,6 +15,9 @@ import { useAuth } from '../context/AuthContext';
 import {
     deriveGroupEdgesFromNodes,
     deriveGroupsFromNodes,
+    filterGroupEdgesForGroups,
+    filterGroupsForMap,
+    mergeGroupLayouts,
 } from '../utils/groupGraph';
 
 export default function MapPage() {
@@ -74,9 +77,33 @@ export default function MapPage() {
                     type: e.type,
                 }));
 
+                const layoutOverrides: Record<string, { x: number; y: number }> = {};
+                for (const g of groups) {
+                    if (g.x != null && g.y != null) {
+                        layoutOverrides[g.id] = { x: Math.round(g.x), y: Math.round(g.y) };
+                    }
+                }
+                for (const [id, pos] of Object.entries(groupMeta?.groupLayout ?? {})) {
+                    layoutOverrides[id] = { x: Math.round(pos.x), y: Math.round(pos.y) };
+                }
+                if (Object.keys(layoutOverrides).length > 0) {
+                    groups = mergeGroupLayouts(groups, layoutOverrides);
+                }
+
                 if (groups.length === 0 && nodes.some((n) => n.groupId)) {
                     groups = deriveGroupsFromNodes(nodes);
                     groupEdges = deriveGroupEdgesFromNodes(nodes, edges);
+                } else if (groups.length > 0) {
+                    groups = filterGroupsForMap(
+                        groups,
+                        groupEdges.map((e) => ({ ...e, id: undefined })),
+                        nodes.map((n) => n.groupId),
+                    );
+                    const visibleIds = new Set(groups.map((g) => g.id));
+                    groupEdges = filterGroupEdgesForGroups(
+                        groupEdges.map((e) => ({ ...e, id: undefined })),
+                        visibleIds,
+                    );
                 }
 
                 setGraphPayload({ nodes, edges, groups, groupEdges });
@@ -277,6 +304,7 @@ export default function MapPage() {
                             activeNodeTitle={
                                 nodes.find((n) => n.id === activeNodeId)?.title ?? null
                             }
+                            viewportStorageId={mapId}
                         />
                     )}
                 </div>

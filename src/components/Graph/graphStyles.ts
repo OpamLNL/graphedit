@@ -63,7 +63,7 @@ export function buildViewGraphOptions(
                     },
             font: {
                 size: superMode ? 14 : 12,
-                color: superMode ? '#f8fafc' : fontColor,
+                color: superMode ? (mode === 'edit' ? fontColor : '#f8fafc') : fontColor,
                 face: 'DM Sans, system-ui, sans-serif',
                 strokeWidth: superMode ? 0 : 2,
                 strokeColor: isDark ? '#0f172a' : '#f8fafc',

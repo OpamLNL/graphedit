@@ -34,6 +34,8 @@ export interface KnowledgeGroupDto {
     completedCount: number;
     availableCount: number;
     progressPercent: number;
+    x?: number | null;
+    y?: number | null;
 }
 
 export interface GroupEdgeDto {
@@ -55,6 +57,7 @@ export interface GroupGraphResponse {
     mapId: number;
     groups: KnowledgeGroupDto[];
     groupEdges: GroupEdgeDto[];
+    groupLayout?: Record<string, { x: number; y: number }>;
 }
 
 export const nodesApi = {

@@ -63,6 +63,11 @@ export interface BulkSavePayload {
     deletedNodeIds?: number[];
     deletedEdgeIds?: number[];
     deletedGroupEdgeIds?: number[];
+    groupLayouts?: {
+        groupId: string;
+        x: number;
+        y: number;
+    }[];
     createRevision?: boolean;
     revisionComment?: string;
 }

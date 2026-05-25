@@ -9,7 +9,7 @@ import type {
     GroupData,
     GroupEdgeData,
 } from '../Graph/Graph';
-import { deriveGroupsFromNodes, deriveGroupEdgesFromNodes } from '../../utils/groupGraph';
+import { deriveGroupsFromNodes, deriveGroupEdgesFromNodes, filterGroupEdgesForGroups, filterGroupsForMap } from '../../utils/groupGraph';
 import { layoutTopicGraphByEdges } from '../../utils/graphLayout';
 
 export type KnowledgeNodeData = {
@@ -240,7 +240,7 @@ export type GroupEdgeState = {
     type: string;
 };
 
-let tempEdgeCounter = -1;
+let tempEdgeCounter = -10001;
 
 export function allocateTempEdgeId(): number {
     tempEdgeCounter -= 1;
@@ -248,7 +248,7 @@ export function allocateTempEdgeId(): number {
 }
 
 export function resetTempEdgeIds(): void {
-    tempEdgeCounter = -1;
+    tempEdgeCounter = -10001;
 }
 
 export function initEditorState(
@@ -298,6 +298,7 @@ export function editorStateToGraphPayload(
             globalOrder: topic?.globalOrder ?? null,
             progress: 0,
             status: 'available' as const,
+            color: n.color,
         };
     });
 
@@ -308,9 +309,18 @@ export function editorStateToGraphPayload(
 
     let resolvedGroups = groups;
     let resolvedGroupEdges = groupEdges;
+
     if (resolvedGroups.length === 0 && nodeData.some((nd) => nd.groupId)) {
         resolvedGroups = deriveGroupsFromNodes(nodeData);
         resolvedGroupEdges = deriveGroupEdgesFromNodes(nodeData, edgeData);
+    } else if (resolvedGroups.length > 0) {
+        resolvedGroups = filterGroupsForMap(
+            resolvedGroups,
+            groupEdges,
+            nodeData.map((n) => n.groupId),
+        );
+        const visibleIds = new Set(resolvedGroups.map((g) => g.id));
+        resolvedGroupEdges = filterGroupEdgesForGroups(groupEdges, visibleIds);
     }
 
     return {
@@ -318,53 +328,193 @@ export function editorStateToGraphPayload(
         edges: edgeData,
         groups: resolvedGroups,
         groupEdges: resolvedGroupEdges.map((e) => {
-            const stored = groupEdges.find(
-                (ge) => ge.from === e.from && ge.to === e.to,
-            );
+            const stored = groupEdges.find((ge) => ge.from === e.from && ge.to === e.to);
             return stored?.id != null ? { ...e, id: stored.id } : e;
         }),
     };
 }
 
+export type EditorSaveSnapshot = {
+    nodes: Map<
+        number,
+        { title: string; topicId: number | null; x: number | null; y: number | null; color: string }
+    >;
+    edgeKeys: Set<string>;
+    groupEdgeKeys: Set<string>;
+    groupLayouts: Record<string, { x: number; y: number }>;
+};
+
+export function buildEditorSaveSnapshot(
+    state: EditorState,
+    groupEdges: GroupEdgeState[],
+    groups: GroupData[],
+): EditorSaveSnapshot {
+    const groupLayouts: Record<string, { x: number; y: number }> = {};
+    for (const g of groups) {
+        if (g.x != null && g.y != null) {
+            groupLayouts[g.id] = { x: Math.round(g.x), y: Math.round(g.y) };
+        }
+    }
+
+    return {
+        nodes: new Map(
+            state.nodes.map((n) => [
+                n.id,
+                {
+                    title: n.title.trim() || 'Новий вузол',
+                    topicId: n.topicId,
+                    x: n.x,
+                    y: n.y,
+                    color: n.color,
+                },
+            ]),
+        ),
+        edgeKeys: new Set(state.edges.map((e) => `${e.fromNodeId}-${e.toNodeId}`)),
+        groupEdgeKeys: new Set(groupEdges.map((e) => `${e.from}-${e.to}`)),
+        groupLayouts,
+    };
+}
+
+function nodeChanged(
+    n: EditorNodeState,
+    snap: EditorSaveSnapshot | null | undefined,
+    dirtyNodeIds?: ReadonlySet<number>,
+): boolean {
+    if (dirtyNodeIds?.has(n.id)) return true;
+    if (!snap) return true;
+    if (n.id < 0) return true;
+    const prev = snap.nodes.get(n.id);
+    if (!prev) return true;
+    return (
+        (n.title.trim() || 'Новий вузол') !== prev.title ||
+        n.topicId !== prev.topicId ||
+        n.x !== prev.x ||
+        n.y !== prev.y ||
+        n.color !== prev.color
+    );
+}
+
+export function applyPendingNodePositions(
+    state: EditorState,
+    pending: ReadonlyMap<number, { x: number; y: number }>,
+): EditorState {
+    if (pending.size === 0) return state;
+    return {
+        ...state,
+        nodes: state.nodes.map((n) => {
+            const pos = pending.get(n.id);
+            return pos ? { ...n, x: pos.x, y: pos.y } : n;
+        }),
+    };
+}
+
+function nodeToBulkPayload(n: EditorNodeState) {
+    const payload: {
+        id?: number;
+        title: string;
+        topicId: number | null;
+        x?: number;
+        y?: number;
+        color: string;
+    } = {
+        title: n.title.trim() || 'Новий вузол',
+        topicId: n.topicId,
+        color: n.color,
+    };
+    if (n.id > 0) payload.id = n.id;
+    else if (n.id < 0) payload.id = n.id;
+    if (n.x != null) payload.x = Math.round(n.x);
+    if (n.y != null) payload.y = Math.round(n.y);
+    return payload;
+}
+
 export function editorStateToBulkSave(
     state: EditorState,
     groupEdges: GroupEdgeState[],
+    groups: GroupData[],
     deletedNodeIds: number[],
     deletedEdgeIds: number[],
     deletedGroupEdgeIds: number[],
+    snapshot?: EditorSaveSnapshot | null,
+    dirtyNodeIds?: ReadonlySet<number>,
+    dirtyEdgeKeys?: ReadonlySet<string>,
 ) {
-    return {
-        nodes: state.nodes.map((n) => {
-            const payload: {
-                id?: number;
-                title: string;
-                topicId: number | null;
-                x: number;
-                y: number;
-                color: string;
-            } = {
-                title: n.title.trim() || 'Новий вузол',
-                topicId: n.topicId,
-                x: Math.round(n.x ?? 0),
-                y: Math.round(n.y ?? 0),
-                color: n.color,
-            };
-            if (n.id > 0) payload.id = n.id;
-            else if (n.id < 0) payload.id = n.id;
-            return payload;
-        }),
-        edges: state.edges.map((e) => ({
+    const currentLayouts: Record<string, { x: number; y: number }> = {};
+    for (const g of groups) {
+        if (g.x != null && g.y != null) {
+            currentLayouts[g.id] = { x: Math.round(g.x), y: Math.round(g.y) };
+        }
+    }
+
+    const groupLayouts = Object.entries(currentLayouts)
+        .filter(([id, pos]) => {
+            const prev = snapshot?.groupLayouts[id];
+            return !prev || prev.x !== pos.x || prev.y !== pos.y;
+        })
+        .map(([groupId, pos]) => ({ groupId, ...pos }));
+
+    const nodes = state.nodes.filter((n) => nodeChanged(n, snapshot, dirtyNodeIds)).map(nodeToBulkPayload);
+
+    const nodePayloadIds = new Set(
+        nodes.map((n) => n.id).filter((id): id is number => id !== undefined),
+    );
+
+    const stateNodeIds = new Set(state.nodes.map((n) => n.id));
+
+    const edges = state.edges
+        .filter((e) => {
+            const key = `${e.fromNodeId}-${e.toNodeId}`;
+            if (!snapshot) return true;
+            if (e.id <= 0) return true;
+            if (dirtyEdgeKeys?.has(key)) return true;
+            return !snapshot.edgeKeys.has(key);
+        })
+        .filter((e) => {
+            const fromOk = e.fromNodeId > 0 || stateNodeIds.has(e.fromNodeId);
+            const toOk = e.toNodeId > 0 || stateNodeIds.has(e.toNodeId);
+            return fromOk && toOk;
+        })
+        .map((e) => ({
             id: e.id > 0 ? e.id : undefined,
             fromNodeId: e.fromNodeId,
             toNodeId: e.toNodeId,
             type: e.type ?? 'prerequisite',
-        })),
-        groupEdges: groupEdges.map((e) => ({
+        }));
+
+    const tempIdsNeeded = new Set<number>();
+    for (const n of state.nodes) {
+        if (n.id < 0) tempIdsNeeded.add(n.id);
+    }
+    for (const e of edges) {
+        if (e.fromNodeId < 0) tempIdsNeeded.add(e.fromNodeId);
+        if (e.toNodeId < 0) tempIdsNeeded.add(e.toNodeId);
+    }
+    for (const tempId of tempIdsNeeded) {
+        if (nodePayloadIds.has(tempId)) continue;
+        const n = state.nodes.find((node) => node.id === tempId);
+        if (!n) continue;
+        nodes.push(nodeToBulkPayload(n));
+        nodePayloadIds.add(tempId);
+    }
+
+    const changedGroupEdges = groupEdges
+        .filter((e) => {
+            if (!snapshot) return true;
+            if (e.id <= 0) return true;
+            return !snapshot.groupEdgeKeys.has(`${e.from}-${e.to}`);
+        })
+        .map((e) => ({
             id: e.id > 0 ? e.id : undefined,
             fromGroupId: e.from,
             toGroupId: e.to,
             type: e.type ?? 'prerequisite',
-        })),
+        }));
+
+    return {
+        nodes,
+        edges,
+        groupEdges: changedGroupEdges,
+        ...(groupLayouts.length > 0 ? { groupLayouts } : {}),
         deletedNodeIds: deletedNodeIds.filter((id) => id > 0),
         deletedEdgeIds: deletedEdgeIds.filter((id) => id > 0),
         deletedGroupEdgeIds: deletedGroupEdgeIds.filter((id) => id > 0),
