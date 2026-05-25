@@ -266,7 +266,8 @@ export function initEditorState(
             y: n.y,
             color: n.color ?? '#6366f1',
             groupId:
-                n.topicId != null ? (topicById.get(n.topicId)?.groupId ?? null) : null,
+                n.groupId ??
+                (n.topicId != null ? (topicById.get(n.topicId)?.groupId ?? null) : null),
         })),
         edges: graph.edges.map((e) => ({
             id: e.id,
@@ -337,7 +338,14 @@ export function editorStateToGraphPayload(
 export type EditorSaveSnapshot = {
     nodes: Map<
         number,
-        { title: string; topicId: number | null; x: number | null; y: number | null; color: string }
+        {
+            title: string;
+            topicId: number | null;
+            groupId: string | null;
+            x: number | null;
+            y: number | null;
+            color: string;
+        }
     >;
     edgeKeys: Set<string>;
     groupEdgeKeys: Set<string>;
@@ -363,6 +371,7 @@ export function buildEditorSaveSnapshot(
                 {
                     title: n.title.trim() || 'Новий вузол',
                     topicId: n.topicId,
+                    groupId: n.groupId,
                     x: n.x,
                     y: n.y,
                     color: n.color,
@@ -388,6 +397,7 @@ function nodeChanged(
     return (
         (n.title.trim() || 'Новий вузол') !== prev.title ||
         n.topicId !== prev.topicId ||
+        n.groupId !== prev.groupId ||
         n.x !== prev.x ||
         n.y !== prev.y ||
         n.color !== prev.color
@@ -408,11 +418,60 @@ export function applyPendingNodePositions(
     };
 }
 
+/** Позиції з vis-network (nodeLayoutRef) перед bulk-save */
+export function applyLayoutSnapshot(
+    state: EditorState,
+    layout: ReadonlyMap<number, { x: number; y: number }>,
+): EditorState {
+    if (layout.size === 0) return state;
+    return {
+        ...state,
+        nodes: state.nodes.map((n) => {
+            const pos = layout.get(n.id);
+            return pos ? { ...n, x: Math.round(pos.x), y: Math.round(pos.y) } : n;
+        }),
+    };
+}
+
+/** Перед save: groupId з теми або з поточної групи редактора */
+export function applyGroupContextForSave(
+    state: EditorState,
+    topicById: Map<number, Topic>,
+    selectedGroupId: string | null,
+    dirtyNodeIds: ReadonlySet<number>,
+): EditorState {
+    if (!selectedGroupId && dirtyNodeIds.size === 0) {
+        return {
+            ...state,
+            nodes: state.nodes.map((n) => {
+                if (n.groupId != null || n.topicId == null) return n;
+                const fromTopic = topicById.get(n.topicId)?.groupId ?? null;
+                return fromTopic != null ? { ...n, groupId: fromTopic } : n;
+            }),
+        };
+    }
+
+    return {
+        ...state,
+        nodes: state.nodes.map((n) => {
+            if (n.groupId != null) return n;
+            const fromTopic =
+                n.topicId != null ? (topicById.get(n.topicId)?.groupId ?? null) : null;
+            if (fromTopic != null) return { ...n, groupId: fromTopic };
+            if (selectedGroupId && dirtyNodeIds.has(n.id)) {
+                return { ...n, groupId: selectedGroupId };
+            }
+            return n;
+        }),
+    };
+}
+
 function nodeToBulkPayload(n: EditorNodeState) {
     const payload: {
         id?: number;
         title: string;
         topicId: number | null;
+        groupId?: string | null;
         x?: number;
         y?: number;
         color: string;
@@ -423,6 +482,7 @@ function nodeToBulkPayload(n: EditorNodeState) {
     };
     if (n.id > 0) payload.id = n.id;
     else if (n.id < 0) payload.id = n.id;
+    if (n.groupId != null) payload.groupId = n.groupId;
     if (n.x != null) payload.x = Math.round(n.x);
     if (n.y != null) payload.y = Math.round(n.y);
     return payload;
@@ -438,6 +498,7 @@ export function editorStateToBulkSave(
     snapshot?: EditorSaveSnapshot | null,
     dirtyNodeIds?: ReadonlySet<number>,
     dirtyEdgeKeys?: ReadonlySet<string>,
+    fullGraph = false,
 ) {
     const currentLayouts: Record<string, { x: number; y: number }> = {};
     for (const g of groups) {
@@ -448,21 +509,27 @@ export function editorStateToBulkSave(
 
     const groupLayouts = Object.entries(currentLayouts)
         .filter(([id, pos]) => {
+            if (fullGraph) return true;
             const prev = snapshot?.groupLayouts[id];
             return !prev || prev.x !== pos.x || prev.y !== pos.y;
         })
         .map(([groupId, pos]) => ({ groupId, ...pos }));
 
-    const nodes = state.nodes.filter((n) => nodeChanged(n, snapshot, dirtyNodeIds)).map(nodeToBulkPayload);
+    const stateNodeIds = new Set(state.nodes.map((n) => n.id));
+
+    const nodes = (
+        fullGraph
+            ? state.nodes
+            : state.nodes.filter((n) => nodeChanged(n, snapshot, dirtyNodeIds))
+    ).map(nodeToBulkPayload);
 
     const nodePayloadIds = new Set(
         nodes.map((n) => n.id).filter((id): id is number => id !== undefined),
     );
 
-    const stateNodeIds = new Set(state.nodes.map((n) => n.id));
-
     const edges = state.edges
         .filter((e) => {
+            if (fullGraph) return true;
             const key = `${e.fromNodeId}-${e.toNodeId}`;
             if (!snapshot) return true;
             if (e.id <= 0) return true;
@@ -499,6 +566,7 @@ export function editorStateToBulkSave(
 
     const changedGroupEdges = groupEdges
         .filter((e) => {
+            if (fullGraph) return true;
             if (!snapshot) return true;
             if (e.id <= 0) return true;
             return !snapshot.groupEdgeKeys.has(`${e.from}-${e.to}`);

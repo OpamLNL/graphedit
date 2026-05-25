@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import NodeEditorPanel from '../components/FlowEditor/NodeEditorPanel';
 import Graph, {
@@ -11,6 +11,8 @@ import {
     allocateTempNodeId,
     autoLayoutEditorGroup,
     applyPendingNodePositions,
+    applyLayoutSnapshot,
+    applyGroupContextForSave,
     buildEditorSaveSnapshot,
     editorStateToBulkSave,
     editorStateToGraphPayload,
@@ -96,14 +98,34 @@ export default function EditorPage() {
     >({});
     const saveSnapshotRef = useRef<EditorSaveSnapshot | null>(null);
     const editorStateRef = useRef<EditorState | null>(null);
+    const nodeLayoutReaderRef = useRef<(() => Map<number, { x: number; y: number }>) | null>(null);
+    const groupEdgesRef = useRef<GroupEdgeState[]>([]);
+    const deletedNodeIdsRef = useRef<number[]>([]);
+    const deletedEdgeIdsRef = useRef<number[]>([]);
+    const deletedGroupEdgeIdsRef = useRef<number[]>([]);
     const pendingNodePositionsRef = useRef<Map<number, { x: number; y: number }>>(new Map());
     const dirtyNodeIdsRef = useRef<Set<number>>(new Set());
     const dirtyEdgeKeysRef = useRef<Set<string>>(new Set());
+
+    const updateEditorState = useCallback((updater: SetStateAction<EditorState | null>) => {
+        setEditorState((prev) => {
+            const next =
+                typeof updater === 'function'
+                    ? (updater as (value: EditorState | null) => EditorState | null)(prev)
+                    : updater;
+            editorStateRef.current = next;
+            return next;
+        });
+    }, []);
 
     const isEditor = role === 'admin' || role === 'teacher';
     const topicById = useMemo(() => new Map(topics.map((t) => [t.id, t])), [topics]);
 
     editorStateRef.current = editorState;
+    groupEdgesRef.current = groupEdges;
+    deletedNodeIdsRef.current = deletedNodeIds;
+    deletedEdgeIdsRef.current = deletedEdgeIds;
+    deletedGroupEdgeIdsRef.current = deletedGroupEdgeIds;
 
     useEffect(() => {
         if (authLoading || !user || !mapId || Number.isNaN(mapId)) {
@@ -137,7 +159,7 @@ export default function EditorPage() {
                     to: e.to,
                     type: e.type,
                 }));
-                setEditorState(nextState);
+                updateEditorState(nextState);
                 setGroups(nextGroups);
                 setGroupLayoutOverrides(nextOverrides);
                 setGroupEdges(nextGroupEdges);
@@ -244,27 +266,56 @@ export default function EditorPage() {
         setSaving(true);
         setStatusMsg(null);
         try {
-            const stateForSave = applyPendingNodePositions(
-                currentEditorState,
+            const layoutSnapshot = nodeLayoutReaderRef.current?.() ?? new Map();
+            let stateForSave = applyLayoutSnapshot(currentEditorState, layoutSnapshot);
+            stateForSave = applyPendingNodePositions(
+                stateForSave,
                 pendingNodePositionsRef.current,
+            );
+            stateForSave = applyGroupContextForSave(
+                stateForSave,
+                new Map(topics.map((t) => [t.id, t])),
+                viewScope === 'topics' ? selectedGroupId : null,
+                dirtyNodeIdsRef.current,
             );
             const groupsForSave =
                 graphPayload?.groups ?? mergeGroupLayouts(groups, groupLayoutOverrides);
             const payload = editorStateToBulkSave(
                 stateForSave,
-                groupEdges,
+                groupEdgesRef.current,
                 groupsForSave,
-                deletedNodeIds,
-                deletedEdgeIds,
-                deletedGroupEdgeIds,
+                deletedNodeIdsRef.current,
+                deletedEdgeIdsRef.current,
+                deletedGroupEdgeIdsRef.current,
                 saveSnapshotRef.current,
                 dirtyNodeIdsRef.current,
                 dirtyEdgeKeysRef.current,
+                false,
             );
+            console.log('[Editor save] PATCH /knowledge-maps/' + mapId + '/graph', {
+                payload,
+                summary: {
+                    nodes: payload.nodes.length,
+                    edges: payload.edges.length,
+                    groupEdges: payload.groupEdges?.length ?? 0,
+                    groupLayouts: payload.groupLayouts?.length ?? 0,
+                    deletedNodeIds: payload.deletedNodeIds?.length ?? 0,
+                    deletedEdgeIds: payload.deletedEdgeIds?.length ?? 0,
+                    deletedGroupEdgeIds: payload.deletedGroupEdgeIds?.length ?? 0,
+                },
+                stateForSave: {
+                    nodeCount: stateForSave.nodes.length,
+                    edgeCount: stateForSave.edges.length,
+                    layoutSnapshotSize: layoutSnapshot.size,
+                    pendingPositionsSize: pendingNodePositionsRef.current.size,
+                },
+            });
             const saved = await knowledgeMapsApi.saveGraph(mapId, payload);
-            const tMap = new Map(topics.map((t) => [t.id, t]));
+            const updatedTopics = await topicsApi.getAll().catch(() => topics);
+            setTopics(updatedTopics);
+            const tMap = new Map(updatedTopics.map((t) => [t.id, t]));
             const nextState = initEditorState(saved, tMap);
-            setEditorState(nextState);
+            updateEditorState(nextState);
             const groupMeta = await nodesApi.getGroupGraph(mapId).catch(() => null);
             let nextGroups = groups;
             let nextOverrides = groupLayoutOverrides;
@@ -361,7 +412,7 @@ export default function EditorPage() {
             (e) => e.fromNodeId === fromId && e.toNodeId === toId,
         );
         if (exists) return;
-        setEditorState((prev) =>
+        updateEditorState((prev) =>
             prev
                 ? {
                       ...prev,
@@ -391,7 +442,7 @@ export default function EditorPage() {
         if (dbIds.length > 0) {
             setDeletedEdgeIds((prev) => [...prev, ...dbIds]);
         }
-        setEditorState((prev) =>
+        updateEditorState((prev) =>
             prev
                 ? {
                       ...prev,
@@ -437,7 +488,7 @@ export default function EditorPage() {
             const pos = { x: Math.round(x), y: Math.round(y) };
             pendingNodePositionsRef.current.set(nodeId, pos);
             dirtyNodeIdsRef.current.add(nodeId);
-            setEditorState((prev) =>
+            updateEditorState((prev) =>
                 prev
                     ? {
                           ...prev,
@@ -466,7 +517,7 @@ export default function EditorPage() {
         [markDirty],
     );
 
-    const handleAddNode = () => {
+    const handleAddNode = async () => {
         if (!selectedGroupId || !editorState) return;
         const id = allocateTempNodeId();
         const groupNodes = editorState.nodes.filter((n) => n.groupId === selectedGroupId);
@@ -486,28 +537,39 @@ export default function EditorPage() {
                 sortKeys,
             ).get(id) ?? { x: 0, y: 0 };
 
-        setEditorState((prev) =>
-            prev
-                ? {
-                      ...prev,
-                      nodes: [
-                          ...prev.nodes,
-                          {
-                              id,
-                              title: 'Новий вузол',
-                              topicId: null,
-                              x: pos.x,
-                              y: pos.y,
-                              color: '#6366f1',
-                              groupId: selectedGroupId,
-                          },
-                      ],
-                  }
-                : prev,
-        );
-        dirtyNodeIdsRef.current.add(id);
-        setActiveNodeId(id);
-        markDirty();
+        try {
+            const topic = await topicsApi.create({
+                title: 'Новий вузол',
+                description: 'Новий вузол',
+                groupId: selectedGroupId,
+            });
+            setTopics((prev) => [...prev, topic]);
+
+            updateEditorState((prev) =>
+                prev
+                    ? {
+                          ...prev,
+                          nodes: [
+                              ...prev.nodes,
+                              {
+                                  id,
+                                  title: 'Новий вузол',
+                                  topicId: topic.id,
+                                  x: pos.x,
+                                  y: pos.y,
+                                  color: '#6366f1',
+                                  groupId: selectedGroupId,
+                              },
+                          ],
+                      }
+                    : prev,
+            );
+            dirtyNodeIdsRef.current.add(id);
+            setActiveNodeId(id);
+            markDirty();
+        } catch (e) {
+            setStatusMsg(parseApiError(e));
+        }
     };
 
     const handleAutoLayout = () => {
@@ -518,7 +580,7 @@ export default function EditorPage() {
                 dirtyNodeIdsRef.current.add(n.id);
             }
         }
-        setEditorState(next);
+        updateEditorState(next);
         markDirty();
     };
 
@@ -529,7 +591,9 @@ export default function EditorPage() {
             const topic = patch.topicId != null ? topicById.get(patch.topicId) : undefined;
             groupId = topic?.groupId ?? null;
         }
-        setEditorState((prev) =>
+        const currentNode = editorState.nodes.find((n) => n.id === activeNodeId);
+        const nextTitle = patch.label ?? currentNode?.title;
+        updateEditorState((prev) =>
             prev
                 ? {
                       ...prev,
@@ -537,7 +601,7 @@ export default function EditorPage() {
                           n.id === activeNodeId
                               ? {
                                     ...n,
-                                    title: patch.label ?? n.title,
+                                    title: nextTitle ?? n.title,
                                     topicId:
                                         patch.topicId !== undefined
                                             ? patch.topicId
@@ -551,6 +615,16 @@ export default function EditorPage() {
                   }
                 : prev,
         );
+        if (patch.label !== undefined && currentNode?.topicId != null) {
+            const trimmed = patch.label.trim() || 'Новий вузол';
+            setTopics((prev) =>
+                prev.map((t) =>
+                    t.id === currentNode.topicId
+                        ? { ...t, title: trimmed, description: trimmed }
+                        : t,
+                ),
+            );
+        }
         dirtyNodeIdsRef.current.add(activeNodeId);
         markDirty();
     };
@@ -560,7 +634,7 @@ export default function EditorPage() {
         if (activeNodeId > 0) {
             setDeletedNodeIds((prev) => [...prev, activeNodeId]);
         }
-        setEditorState((prev) =>
+        updateEditorState((prev) =>
             prev
                 ? {
                       ...prev,
@@ -827,6 +901,7 @@ export default function EditorPage() {
                                 onBackToGroups={handleBackToGroups}
                                 onClearSelection={handleClearSelection}
                                 viewportStorageId={mapId}
+                                nodeLayoutReaderRef={nodeLayoutReaderRef}
                             />
                         </div>
                     )}

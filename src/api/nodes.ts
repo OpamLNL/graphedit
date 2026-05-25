@@ -4,7 +4,7 @@ export interface GraphNode {
     id: number;
     label?: string;
     title: string;
-    topicId: number;
+    topicId: number | null;
     x: number | null;
     y: number | null;
     level: number;
@@ -63,12 +63,12 @@ export interface GroupGraphResponse {
 export const nodesApi = {
     getGraph: (mapId?: number) => {
         const q = mapId ? `?mapId=${mapId}` : '';
-        return apiFetch<GraphResponse>(`/nodes/graph${q}`);
+        return apiFetch<GraphResponse>(`/nodes/graph${q}`, { cache: 'no-store' });
     },
 
     getGroupGraph: (mapId?: number) => {
         const q = mapId ? `?mapId=${mapId}` : '';
-        return apiFetch<GroupGraphResponse>(`/nodes/group-graph${q}`);
+        return apiFetch<GroupGraphResponse>(`/nodes/group-graph${q}`, { cache: 'no-store' });
     },
 
     getAll: (mapId?: number) => {

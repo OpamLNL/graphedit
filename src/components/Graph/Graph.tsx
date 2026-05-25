@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
 import { Network, DataSet } from 'vis-network/standalone';
 import { useTheme } from '../../context/ThemeContext';
 import { buildViewGraphOptions } from './graphStyles';
@@ -35,7 +35,7 @@ export interface NodeData {
     id: number;
     label: string;
     title: string;
-    topicId: number;
+    topicId: number | null;
     x: number | null;
     y: number | null;
     level: number;
@@ -107,6 +107,8 @@ interface GraphProps {
     onBackToGroups?: () => void;
     onClearSelection?: () => void;
     viewportStorageId?: number | string;
+    /** Ref для зчитування поточних x/y тем перед збереженням */
+    nodeLayoutReaderRef?: MutableRefObject<(() => Map<number, { x: number; y: number }>) | null>;
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -174,6 +176,7 @@ export default function Graph({
     onBackToGroups,
     onClearSelection,
     viewportStorageId,
+    nodeLayoutReaderRef,
 }: GraphProps) {
     const shellRef = useRef<HTMLDivElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -246,6 +249,22 @@ export default function Graph({
     connectSourceIdRef.current = connectSourceId;
     connectSourceGroupIdRef.current = connectSourceGroupId;
     viewportStorageIdRef.current = viewportStorageId;
+
+    useEffect(() => {
+        if (!nodeLayoutReaderRef) return;
+        nodeLayoutReaderRef.current = () => {
+            const out = new Map<number, { x: number; y: number }>();
+            for (const [id, pos] of nodeLayoutRef.current.entries()) {
+                if (typeof id === 'number' && !Number.isNaN(id)) {
+                    out.set(id, { x: Math.round(pos.x), y: Math.round(pos.y) });
+                }
+            }
+            return out;
+        };
+        return () => {
+            nodeLayoutReaderRef.current = null;
+        };
+    }, [nodeLayoutReaderRef]);
 
     const currentViewportKey = useCallback(() => {
         const id = viewportStorageIdRef.current;

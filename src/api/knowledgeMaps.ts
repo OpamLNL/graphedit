@@ -15,6 +15,7 @@ export interface EditorGraphNode {
     id: number;
     title: string;
     topicId: number | null;
+    groupId?: string | null;
     x: number | null;
     y: number | null;
     color: string | null;
@@ -44,6 +45,7 @@ export interface BulkSavePayload {
         id?: number;
         title: string;
         topicId?: number | null;
+        groupId?: string | null;
         x?: number | null;
         y?: number | null;
         color?: string | null;

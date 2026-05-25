@@ -56,7 +56,8 @@ export default function MapPage() {
                 const topicById = new Map(topics.map((t) => [t.id, t]));
 
                 const nodes: NodeData[] = data.nodes.map((node) => {
-                    const topic = topicById.get(node.topicId);
+                    const topic =
+                        node.topicId != null ? topicById.get(node.topicId) : undefined;
                     return {
                         ...node,
                         label: node.title || `Вузол ${node.id}`,
@@ -126,7 +127,10 @@ export default function MapPage() {
     );
 
     const activeTopic = useMemo(
-        () => (activeNode ? topicsById.get(activeNode.topicId) ?? null : null),
+        () =>
+            activeNode && activeNode.topicId != null
+                ? topicsById.get(activeNode.topicId) ?? null
+                : null,
         [activeNode, topicsById],
     );
     const searchResults = useMemo(() => {
