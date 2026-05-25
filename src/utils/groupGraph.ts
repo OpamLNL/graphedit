@@ -379,12 +379,27 @@ export function styledTopicNodes(
             color: editMode
                 ? editorTopicColor(node.color ?? '#6366f1', isActive, isConnectSource)
                 : topicColor(node.status, isActive, isConnectSource),
-            size: isActive || isConnectSource ? 16 : 12,
-            borderWidth: isActive || isConnectSource ? 3 : 1.5,
-            font: topicLabelFont(isDark),
-            margin: { top: 2, right: 6, bottom: 12, left: 6 },
+            borderWidth: isActive || isConnectSource ? 3 : editMode ? 2 : 1.5,
             labelHighlightBold: false,
         };
+
+        if (editMode) {
+            item.shape = 'box';
+            item.shapeProperties = { borderRadius: 10 };
+            item.widthConstraint = { minimum: 96, maximum: 220 };
+            item.font = {
+                size: 11,
+                color: '#f8fafc',
+                face: 'DM Sans, system-ui, sans-serif',
+                align: 'center' as const,
+                strokeWidth: 0,
+            };
+            item.margin = 10;
+        } else {
+            item.size = isActive || isConnectSource ? 16 : 12;
+            item.font = topicLabelFont(isDark);
+            item.margin = { top: 2, right: 6, bottom: 12, left: 6 };
+        }
         if (editMode) {
             if (pos?.x != null && pos?.y != null) {
                 item.x = pos.x;

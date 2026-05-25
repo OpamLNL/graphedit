@@ -122,7 +122,38 @@ function getCanvasSize(container: HTMLElement | null) {
     return { width: container.clientWidth || 900, height: container.clientHeight || 600 };
 }
 
-const CLICK_SLOP_PX = 8;
+const CLICK_SLOP_PX = 12;
+
+/** Точний hit-test vis-network; fallback — найближчий вузол у радіусі (для підпису біля dot) */
+function pickNodeAtPointer(
+    net: Network,
+    pointer: { x: number; y: number },
+    nodeIds: (number | string)[],
+    maxRadiusPx: number,
+): number | string | undefined {
+    const direct = net.getNodeAt(pointer);
+    if (direct != null) return direct;
+
+    if (nodeIds.length === 0 || maxRadiusPx <= 0) return undefined;
+
+    let best: number | string | undefined;
+    let bestDist = maxRadiusPx * maxRadiusPx;
+    const positions = net.getPositions(nodeIds);
+
+    for (const id of nodeIds) {
+        const pos = positions[id as number | string];
+        if (!pos) continue;
+        const dom = net.canvasToDOM({ x: pos.x, y: pos.y });
+        const dx = dom.x - pointer.x;
+        const dy = dom.y - pointer.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestDist) {
+            bestDist = d2;
+            best = id;
+        }
+    }
+    return best;
+}
 
 function resolveGroupClickId(params: {
     nodes: (number | string)[];
@@ -828,19 +859,22 @@ export default function Graph({
 
             const rect = container.getBoundingClientRect();
             const pointer = { x: clientX - rect.left, y: clientY - rect.top };
+            const visibleIds = (nodesDS.current?.getIds() ?? []).filter(
+                (id) => !isGroupNodeId(id),
+            );
+            const pickRadius = editModeRef.current ? 18 : 56;
+            const nodeId = pickNodeAtPointer(net, pointer, visibleIds, pickRadius);
 
             if (editModeRef.current && !connectModeRef.current) {
                 if (pickEdgeAtPointer(net, pointer)) return;
 
-                const nodeAt = net.getNodeAt(pointer);
-                if (nodeAt == null) {
+                if (nodeId == null) {
                     net.unselectAll();
                     onClearSelectionRef.current?.();
                     return;
                 }
             }
 
-            const nodeId = net.getNodeAt(pointer);
             if (nodeId == null) return;
 
             if (editModeRef.current && !connectModeRef.current) {
