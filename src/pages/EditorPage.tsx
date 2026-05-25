@@ -908,7 +908,7 @@ export default function EditorPage() {
                 </div>
 
                 {showRightPanel && viewScope === 'topics' && (
-                    <aside className="w-72 shrink-0 border-l border-base-content/10 bg-base-100/50 flex flex-col">
+                    <aside className="w-80 shrink-0 border-l border-base-content/10 bg-base-100/50 flex flex-col max-h-full">
                         <div className="p-3 border-b border-base-content/5 flex justify-between items-center">
                             <p className="text-[10px] uppercase tracking-widest opacity-40 font-display font-semibold">
                                 Властивості

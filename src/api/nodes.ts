@@ -60,6 +60,19 @@ export interface GroupGraphResponse {
     groupLayout?: Record<string, { x: number; y: number }>;
 }
 
+export interface NodeMediaItem {
+    id: number;
+    url: string;
+    caption: string | null;
+    sortOrder: number;
+}
+
+export interface NodeContentResponse {
+    nodeId: number;
+    theoryMd: string | null;
+    media: NodeMediaItem[];
+}
+
 export const nodesApi = {
     getGraph: (mapId?: number) => {
         const q = mapId ? `?mapId=${mapId}` : '';
@@ -75,4 +88,28 @@ export const nodesApi = {
         const q = mapId ? `?mapId=${mapId}` : '';
         return apiFetch(`/nodes${q}`);
     },
+
+    getContent: (nodeId: number) =>
+        apiFetch<NodeContentResponse>(`/nodes/${nodeId}/content`, { cache: 'no-store' }),
+
+    updateContent: (nodeId: number, theoryMd: string | null) =>
+        apiFetch<NodeContentResponse>(`/nodes/${nodeId}/content`, {
+            method: 'PATCH',
+            body: JSON.stringify({ theoryMd }),
+        }),
+
+    uploadMedia: (nodeId: number, file: File, caption?: string) => {
+        const form = new FormData();
+        form.append('file', file);
+        if (caption?.trim()) form.append('caption', caption.trim());
+        return apiFetch<NodeContentResponse>(`/nodes/${nodeId}/media`, {
+            method: 'POST',
+            body: form,
+        });
+    },
+
+    deleteMedia: (nodeId: number, mediaId: number) =>
+        apiFetch<NodeContentResponse>(`/nodes/${nodeId}/media/${mediaId}`, {
+            method: 'DELETE',
+        }),
 };

@@ -39,3 +39,10 @@ export async function apiFetch<T>(
 }
 
 export { API_BASE_URL };
+
+/** Повний URL для статичних файлів API (/api/uploads/...) */
+export function apiAssetUrl(path: string): string {
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
+    const base = API_BASE_URL.replace(/\/api\/?$/, '');
+    return `${base}${path.startsWith('/') ? path : `/${path}`}`;
+}

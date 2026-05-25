@@ -1,5 +1,6 @@
 import type { Topic } from '../../api/topics';
 import type { KnowledgeNodeData } from './layoutUtils';
+import NodeContentSection from '../NodeContentSection/NodeContentSection';
 
 const PRESET_COLORS = [
     '#6366f1',
@@ -93,6 +94,8 @@ export default function NodeEditorPanel({
                     <p className="text-[10px] opacity-45 mt-1 line-clamp-2">{linkedTopic.description}</p>
                 )}
             </label>
+
+            <NodeContentSection nodeId={nodeKey} editable />
 
             <button type="button" className="btn btn-error btn-outline btn-sm w-full" onClick={onDelete}>
                 Видалити вузол

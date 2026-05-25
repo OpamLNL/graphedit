@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { NodeData } from '../Graph/Graph';
 import type { Topic } from '../../api/topics';
 import { progressApi } from '../../api/progress';
+import NodeContentSection from '../NodeContentSection/NodeContentSection';
 
 interface NodeInfoPanelProps {
     node: NodeData | null;
@@ -26,7 +27,7 @@ export default function NodeInfoPanel({ node, topic: topicProp, onProgressUpdate
     };
 
     return (
-        <div className="card w-72 max-h-[400px] overflow-y-auto bg-base-100 shadow-md m-4 border border-base-content/10">
+        <div className="card w-80 max-h-[min(560px,calc(100vh-120px))] overflow-y-auto bg-base-100 shadow-md m-4 border border-base-content/10">
             <div className="card-body min-h-48 p-4">
                 {!node ? (
                     <p className="italic text-sm opacity-60">Оберіть вузол, щоб побачити інформацію</p>
@@ -56,11 +57,10 @@ export default function NodeInfoPanel({ node, topic: topicProp, onProgressUpdate
 
                         <h2 className="text-xl font-bold">{topicProp?.title ?? node.title ?? node.label}</h2>
 
-                        {topicProp?.description && (
-                            <p className="text-sm whitespace-pre-wrap opacity-80 mt-2">
-                                {topicProp.description}
-                            </p>
-                        )}
+                        <NodeContentSection
+                            nodeId={node.id}
+                            fallbackDescription={topicProp?.description ?? null}
+                        />
                     </>
                 )}
             </div>
