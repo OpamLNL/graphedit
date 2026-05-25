@@ -8,9 +8,15 @@ interface NodeInfoPanelProps {
     node: NodeData | null;
     topic?: Topic | null;
     onProgressUpdate?: () => void;
+    embedded?: boolean;
 }
 
-export default function NodeInfoPanel({ node, topic: topicProp, onProgressUpdate }: NodeInfoPanelProps) {
+export default function NodeInfoPanel({
+    node,
+    topic: topicProp,
+    onProgressUpdate,
+    embedded = false,
+}: NodeInfoPanelProps) {
     const [marking, setMarking] = useState(false);
 
     const handleMarkAsLearned = async () => {
@@ -27,8 +33,14 @@ export default function NodeInfoPanel({ node, topic: topicProp, onProgressUpdate
     };
 
     return (
-        <div className="card w-80 max-h-[min(560px,calc(100vh-120px))] overflow-y-auto bg-base-100 shadow-md m-4 border border-base-content/10">
-            <div className="card-body min-h-48 p-4">
+        <div
+            className={
+                embedded
+                    ? 'p-4'
+                    : 'card w-80 max-h-[min(560px,calc(100vh-120px))] overflow-y-auto bg-base-100 shadow-md m-4 border border-base-content/10'
+            }
+        >
+            <div className={embedded ? 'space-y-3' : 'card-body min-h-48 p-4'}>
                 {!node ? (
                     <p className="italic text-sm opacity-60">Оберіть вузол, щоб побачити інформацію</p>
                 ) : (

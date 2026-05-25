@@ -24,6 +24,11 @@ import {
 } from '../components/FlowEditor/layoutUtils';
 import { layoutTopicGraphByEdges } from '../utils/graphLayout';
 import { mergeGroupLayouts } from '../utils/groupGraph';
+import {
+    applyStoredNavigation,
+    navigationStorageKey,
+    saveStoredNavigation,
+} from '../utils/graphNavigationStorage';
 import type { GroupGraphResponse } from '../api/nodes';
 import {
     knowledgeMapsApi,
@@ -106,6 +111,7 @@ export default function EditorPage() {
     const pendingNodePositionsRef = useRef<Map<number, { x: number; y: number }>>(new Map());
     const dirtyNodeIdsRef = useRef<Set<number>>(new Set());
     const dirtyEdgeKeysRef = useRef<Set<string>>(new Set());
+    const navReadyRef = useRef(false);
 
     const updateEditorState = useCallback((updater: SetStateAction<EditorState | null>) => {
         setEditorState((prev) => {
@@ -182,12 +188,30 @@ export default function EditorPage() {
                 setDeletedGroupEdgeIds([]);
                 setDirty(false);
                 setValidation(null);
-                setViewScope('groups');
-                setSelectedGroupId(null);
-                setActiveGroupId(null);
                 setConnectMode(false);
                 setConnectSourceId(null);
                 setConnectSourceGroupId(null);
+
+                if (!navReadyRef.current) {
+                    navReadyRef.current = true;
+                    const groupIds = new Set(nextGroups.map((g) => g.id));
+                    for (const n of nextState.nodes) {
+                        if (n.groupId) groupIds.add(n.groupId);
+                    }
+                    const nav = applyStoredNavigation(
+                        mapId,
+                        'editor',
+                        groupIds,
+                        nextState.nodes.map((n) => n.id),
+                    );
+                    setViewScope(nav.viewScope);
+                    setSelectedGroupId(nav.selectedGroupId);
+                    setActiveNodeId(nav.activeNodeId);
+                    setActiveGroupId(nav.activeGroupId ?? nav.selectedGroupId);
+                    if (nav.activeNodeId != null && nav.viewScope === 'topics') {
+                        setTimeout(() => window.__focusGraphNode?.(nav.activeNodeId!), 300);
+                    }
+                }
             })
             .catch((e) => {
                 if (cancelled) return;
@@ -202,6 +226,20 @@ export default function EditorPage() {
             cancelled = true;
         };
     }, [user, isEditor, mapId, authLoading]);
+
+    useEffect(() => {
+        if (!mapId || Number.isNaN(mapId) || loading || !navReadyRef.current) return;
+        saveStoredNavigation(navigationStorageKey(mapId, 'editor'), {
+            viewScope,
+            selectedGroupId,
+            activeNodeId,
+            activeGroupId,
+        });
+    }, [mapId, loading, viewScope, selectedGroupId, activeNodeId, activeGroupId]);
+
+    useEffect(() => {
+        navReadyRef.current = false;
+    }, [mapId]);
 
     const graphPayload = useMemo((): GraphPayload | null => {
         if (!editorState) return null;

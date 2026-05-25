@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';import { Link, Navigate, useParams } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, Navigate, useParams } from 'react-router-dom';
 import Graph, {
     type GraphPayload,
     type GraphViewScope,
@@ -7,10 +8,13 @@ import Graph, {
     type GroupData,
     type GroupEdgeData,
 } from '../components/Graph/Graph';
+import MapPageHeader from '../components/MapPage/MapPageHeader';
+import MapGroupsOverview from '../components/MapPage/MapGroupsOverview';
 import NodeInfoPanel from '../components/NodeInfoPanel/NodeInfoPanel';
 import { nodesApi } from '../api/nodes';
 import { topicsApi, type Topic } from '../api/topics';
 import { knowledgeMapsApi, type KnowledgeMap } from '../api/knowledgeMaps';
+import { progressApi, type ProgressSummary } from '../api/progress';
 import { useAuth } from '../context/AuthContext';
 import {
     deriveGroupEdgesFromNodes,
@@ -19,15 +23,23 @@ import {
     filterGroupsForMap,
     mergeGroupLayouts,
 } from '../utils/groupGraph';
+import {
+    applyStoredNavigation,
+    navigationStorageKey,
+    saveStoredNavigation,
+} from '../utils/graphNavigationStorage';
 
 export default function MapPage() {
     const { mapId: mapIdParam } = useParams<{ mapId: string }>();
     const mapId = Number(mapIdParam);
     const { user, loading: authLoading, role } = useAuth();
+    const isEditor = role === 'admin' || role === 'teacher';
 
     const [mapMeta, setMapMeta] = useState<KnowledgeMap | null>(null);
     const [graphPayload, setGraphPayload] = useState<GraphPayload | null>(null);
+    const [progressSummary, setProgressSummary] = useState<ProgressSummary | null>(null);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [activeNodeId, setActiveNodeId] = useState<number | null>(null);
     const [refresh, setRefresh] = useState(0);
 
@@ -35,6 +47,7 @@ export default function MapPage() {
     const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
     const [topicsById, setTopicsById] = useState<Map<number, Topic>>(new Map());
     const [searchQuery, setSearchQuery] = useState('');
+    const navReadyRef = useRef(false);
 
     useEffect(() => {
         if (!user || !mapId || Number.isNaN(mapId)) {
@@ -42,15 +55,27 @@ export default function MapPage() {
             return;
         }
 
+        let cancelled = false;
         setLoading(true);
+        setLoadError(null);
+
         Promise.all([
             knowledgeMapsApi.getOne(mapId),
             nodesApi.getGraph(mapId),
             nodesApi.getGroupGraph(mapId).catch(() => null),
             topicsApi.getAll().catch(() => []),
+            progressApi.getMySummary(mapId).catch(() => null),
         ])
-            .then(([meta, data, groupMeta, topics]) => {
+            .then(([meta, data, groupMeta, topics, progress]) => {
+                if (cancelled) return;
+
+                if (!isEditor && meta.status !== 'published') {
+                    setLoadError('Ця карта ще не опублікована.');
+                    return;
+                }
+
                 setMapMeta(meta);
+                setProgressSummary(progress);
                 setTopicsById(new Map(topics.map((t) => [t.id, t])));
 
                 const topicById = new Map(topics.map((t) => [t.id, t]));
@@ -108,10 +133,49 @@ export default function MapPage() {
                 }
 
                 setGraphPayload({ nodes, edges, groups, groupEdges });
+
+                if (!navReadyRef.current) {
+                    navReadyRef.current = true;
+                    const nav = applyStoredNavigation(
+                        mapId,
+                        'view',
+                        groups.map((g) => g.id),
+                        nodes.map((n) => n.id),
+                    );
+                    setViewScope(nav.viewScope);
+                    setSelectedGroupId(nav.selectedGroupId);
+                    setActiveNodeId(nav.activeNodeId);
+                    if (nav.activeNodeId != null && nav.viewScope === 'topics') {
+                        setTimeout(() => window.__focusGraphNode?.(nav.activeNodeId!), 300);
+                    }
+                }
             })
-            .catch(console.error)
-            .finally(() => setLoading(false));
-    }, [user, mapId, refresh]);
+            .catch((e) => {
+                if (cancelled) return;
+                console.error(e);
+                setLoadError('Не вдалося завантажити карту.');
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [user, mapId, refresh, isEditor]);
+
+    useEffect(() => {
+        if (!mapId || Number.isNaN(mapId) || loading || !navReadyRef.current) return;
+        saveStoredNavigation(navigationStorageKey(mapId, 'view'), {
+            viewScope,
+            selectedGroupId,
+            activeNodeId,
+        });
+    }, [mapId, loading, viewScope, selectedGroupId, activeNodeId]);
+
+    useEffect(() => {
+        navReadyRef.current = false;
+    }, [mapId]);
 
     const groups = graphPayload?.groups ?? [];
     const nodes = graphPayload?.nodes ?? [];
@@ -133,6 +197,7 @@ export default function MapPage() {
                 : null,
         [activeNode, topicsById],
     );
+
     const searchResults = useMemo(() => {
         const q = searchQuery.trim().toLowerCase();
         if (!q) return [];
@@ -160,7 +225,6 @@ export default function MapPage() {
             setViewScope('topics');
         }
         setActiveNodeId(id);
-        localStorage.setItem('lastFocusedNodeId', id.toString());
     };
 
     const handleSearchPick = (node: NodeData) => {
@@ -173,13 +237,26 @@ export default function MapPage() {
         setTimeout(() => window.__focusGraphNode?.(node.id), 150);
     };
 
-    if (authLoading) return <div className="p-8 text-center">Завантаження...</div>;
+    const handleProgressUpdate = () => {
+        if (!mapId || Number.isNaN(mapId)) return;
+        progressApi
+            .getMySummary(mapId)
+            .then(setProgressSummary)
+            .catch(console.error);
+        setRefresh((r) => r + 1);
+    };
+
+    if (authLoading) {
+        return <div className="p-8 text-center opacity-60">Завантаження...</div>;
+    }
 
     if (!user) {
         return (
             <div className="max-w-lg mx-auto p-8 text-center">
                 <p className="mb-4">Увійди, щоб переглянути карту знань</p>
-                <Link to="/login" className="btn btn-primary">Увійти через Google</Link>
+                <Link to="/login" className="btn btn-primary">
+                    Увійти через Google
+                </Link>
             </div>
         );
     }
@@ -188,135 +265,88 @@ export default function MapPage() {
         return <Navigate to="/maps" replace />;
     }
 
+    if (loadError) {
+        return (
+            <div className="max-w-lg mx-auto p-8 text-center space-y-4">
+                <p className="text-error">{loadError}</p>
+                <Link to="/maps" className="btn btn-primary">
+                    ← До списку карт
+                </Link>
+            </div>
+        );
+    }
+
     return (
-        <div className="flex flex-col min-h-[calc(100vh-64px)]">
-            <div className="px-4 py-3 border-b border-base-content/10 bg-base-100/50 space-y-2 shrink-0">
-                <div className="flex flex-wrap items-center gap-2">
-                    <Link to="/maps" className="btn btn-ghost btn-xs">← Карти</Link>
-                    <h1 className="text-lg font-bold">{mapMeta?.title ?? 'Карта знань'}</h1>
-                    <span className="badge badge-ghost badge-xs opacity-60">
-                        {groups.length} груп · {nodes.length} тем
-                    </span>
-                    {(role === 'admin' || role === 'teacher') && (
-                        <Link to={`/editor/${mapId}`} className="btn btn-outline btn-xs ml-auto">
-                            Редагувати
-                        </Link>
+        <div className="flex flex-col min-h-[calc(100vh-64px)] bg-base-200/30">
+            <MapPageHeader
+                mapMeta={mapMeta}
+                mapId={mapId}
+                groups={groups}
+                nodes={nodes}
+                viewScope={viewScope}
+                selectedGroupId={selectedGroupId}
+                selectedGroupTitle={selectedGroup?.title ?? null}
+                progress={progressSummary}
+                searchQuery={searchQuery}
+                searchResults={searchResults}
+                isEditor={isEditor}
+                onBackToGroups={handleBackToGroups}
+                onSelectGroup={handleSelectGroup}
+                onSearchChange={setSearchQuery}
+                onSearchPick={handleSearchPick}
+            />
+
+            <div className="flex flex-1 min-h-0 overflow-hidden flex-col lg:flex-row">
+                <div className="flex-1 flex flex-col min-h-0 min-w-0">
+                    {viewScope === 'groups' && !loading && (
+                        <MapGroupsOverview groups={groups} onSelectGroup={handleSelectGroup} />
                     )}
-
-                    <div className="flex items-center gap-1 text-xs opacity-70 ml-2">
-                        <button
-                            type="button"
-                            className={`btn btn-xs ${viewScope === 'groups' ? 'btn-primary' : 'btn-ghost'}`}
-                            onClick={handleBackToGroups}
-                        >
-                            Групи
-                        </button>
-                        {selectedGroup && (
-                            <>
-                                <span>/</span>
-                                <span className="font-medium truncate max-w-[200px]" title={selectedGroup.title}>
-                                    {selectedGroup.title}
-                                </span>
-                            </>
+                    <div className="flex-1 relative min-h-[320px]">
+                        {loading ? (
+                            <div className="absolute inset-0 flex items-center justify-center opacity-60">
+                                Завантаження графу...
+                            </div>
+                        ) : (
+                            <Graph
+                                payload={graphPayload}
+                                viewScope={viewScope}
+                                selectedGroupId={selectedGroupId}
+                                onGroupSelect={handleSelectGroup}
+                                onNodeClick={handleSelectNode}
+                                onBackToGroups={handleBackToGroups}
+                                activeNodeId={activeNodeId}
+                                activeNodeTitle={
+                                    nodes.find((n) => n.id === activeNodeId)?.title ?? null
+                                }
+                                viewportStorageId={mapId}
+                            />
                         )}
                     </div>
+                </div>
 
-                    <div className="relative ml-auto">
-                        <input
-                            type="search"
-                            placeholder="Пошук теми..."
-                            className="input input-xs input-bordered w-44 sm:w-56"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
+                <aside className="hidden lg:flex w-80 shrink-0 border-l border-base-content/10 bg-base-100/90 flex-col min-h-0">
+                    <div className="p-3 border-b border-base-content/10">
+                        <p className="text-[10px] uppercase tracking-widest opacity-40 font-display font-semibold">
+                            {activeNode ? 'Тема' : 'Обери вузол'}
+                        </p>
+                    </div>
+                    <div className="flex-1 overflow-y-auto">
+                        <NodeInfoPanel
+                            node={activeNode}
+                            topic={activeTopic}
+                            onProgressUpdate={handleProgressUpdate}
+                            embedded
                         />
-                        {searchQuery && searchResults.length > 0 && (
-                            <ul className="absolute top-full right-0 mt-1 z-30 menu bg-base-100 rounded-box shadow-lg border border-base-content/10 w-64 p-1">
-                                {searchResults.map((n) => {
-                                    const g = groups.find((gr) => gr.id === n.groupId);
-                                    return (
-                                        <li key={n.id}>
-                                            <button type="button" onClick={() => handleSearchPick(n)}>
-                                                <span className="truncate">{n.title}</span>
-                                                <span className="badge badge-xs opacity-50 shrink-0">
-                                                    {g?.title?.slice(0, 12) ?? '?'}
-                                                </span>
-                                            </button>
-                                        </li>
-                                    );
-                                })}
-                            </ul>
-                        )}
                     </div>
-
-                    <button
-                        type="button"
-                        className="btn btn-ghost btn-xs"
-                        onClick={() => window.__fitGraphView?.()}
-                    >
-                        ⊞ Fit
-                    </button>
-                </div>
-
-                <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-thin">
-                    {groups.map((g) => (
-                        <button
-                            key={g.id}
-                            type="button"
-                            title={`${g.topicCount} тем · ${g.progressPercent}%`}
-                            className={`btn btn-xs shrink-0 ${
-                                selectedGroupId === g.id && viewScope === 'topics'
-                                    ? 'btn-secondary'
-                                    : g.availableCount > 0
-                                      ? 'btn-ghost border border-success/30'
-                                      : 'btn-ghost'
-                            }`}
-                            onClick={() => handleSelectGroup(g.id)}
-                        >
-                            {g.title}
-                            <span className="opacity-40 ml-1">({g.topicCount})</span>
-                        </button>
-                    ))}
-                </div>
-
-                <p className="text-[10px] opacity-40">
-                    {viewScope === 'groups'
-                        ? 'Огляд груп зі звʼязками. Клік по групі або кнопці зверху — теми всередині.'
-                        : `${selectedGroup?.topicCount ?? 0} тем у групі «${selectedGroup?.title ?? ''}»`}
-                    {' · '}
-                    <span className="text-warning">●</span> обрано
-                    <span className="text-success ml-2">●</span> доступно
-                    <span className="text-info ml-2">●</span> завершено
-                    <span className="opacity-50 ml-2">●</span> locked
-                </p>
+                </aside>
             </div>
 
-            <div className="flex flex-1 min-h-0 overflow-hidden">
-                <div className="flex-1 relative min-h-0">
-                    {loading ? (
-                        <div className="absolute inset-0 flex items-center justify-center opacity-60">
-                            Завантаження графу...
-                        </div>
-                    ) : (
-                        <Graph
-                            payload={graphPayload}
-                            viewScope={viewScope}
-                            selectedGroupId={selectedGroupId}
-                            onGroupSelect={handleSelectGroup}
-                            onNodeClick={handleSelectNode}
-                            onBackToGroups={handleBackToGroups}
-                            activeNodeId={activeNodeId}
-                            activeNodeTitle={
-                                nodes.find((n) => n.id === activeNodeId)?.title ?? null
-                            }
-                            viewportStorageId={mapId}
-                        />
-                    )}
-                </div>
-
+            <div className="lg:hidden border-t border-base-content/10 bg-base-100/95 max-h-[min(42vh,360px)] overflow-y-auto">
                 <NodeInfoPanel
                     node={activeNode}
                     topic={activeTopic}
-                    onProgressUpdate={() => setRefresh((r) => r + 1)}
+                    onProgressUpdate={handleProgressUpdate}
+                    embedded
                 />
             </div>
         </div>
