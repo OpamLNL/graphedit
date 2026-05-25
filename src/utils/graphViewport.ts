@@ -39,6 +39,8 @@ export interface ViewportNetwork {
 const DEFAULT_FOCUS_SCALE = 0.85;
 const FIT_MIN_RATIO = 0.55;
 const FIT_MAX_RATIO = 2.8;
+const GROUPS_FIT_MIN_RATIO = 0.4;
+const GROUPS_MAX_SCALE = 4;
 const ABSOLUTE_MIN_SCALE = 0.2;
 const ABSOLUTE_MAX_SCALE = 2.5;
 
@@ -61,8 +63,19 @@ export function buildFocusMoveTo(
     };
 }
 
-export function limitsFromFitScale(fitScale: number): ZoomLimits {
+export function limitsFromFitScale(
+    fitScale: number,
+    view: 'groups' | 'topics' = 'topics',
+): ZoomLimits {
     const base = fitScale > 0 ? fitScale : DEFAULT_FOCUS_SCALE;
+
+    if (view === 'groups') {
+        return {
+            min: Math.max(0.06, base * GROUPS_FIT_MIN_RATIO),
+            max: Math.max(GROUPS_MAX_SCALE, base * 12),
+        };
+    }
+
     return {
         min: Math.max(ABSOLUTE_MIN_SCALE, base * FIT_MIN_RATIO),
         max: Math.min(ABSOLUTE_MAX_SCALE, base * FIT_MAX_RATIO),

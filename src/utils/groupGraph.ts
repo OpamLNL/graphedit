@@ -114,13 +114,12 @@ export function layoutTopicsInGroup(nodes: NodeData[]): Map<number, { x: number;
     return positions;
 }
 
-/** Групи — колонки за level, рядки за sortOrder */
+/** Групи — зверху вниз за level; кілька груп на одному рівні — в ряд */
 export function layoutGroups(groups: GroupData[]): Map<string, { x: number; y: number }> {
-    const levelSeparation = 220;
-    const rowSpacing = 100;
+    const levelStep = 132;
+    const rowStep = 228;
 
     const sortedLevels = [...new Set(groups.map((g) => g.level))].sort((a, b) => a - b);
-    const colOfLevel = new Map(sortedLevels.map((lv, i) => [lv, i]));
 
     const positions = new Map<string, { x: number; y: number }>();
 
@@ -130,14 +129,15 @@ export function layoutGroups(groups: GroupData[]): Map<string, { x: number; y: n
         byLevel.get(g.level)!.push(g);
     }
 
-    for (const [level, list] of byLevel) {
-        const col = colOfLevel.get(level) ?? 0;
-        const sorted = [...list].sort((a, b) => a.sortOrder - b.sortOrder);
-        const span = Math.max(0, (sorted.length - 1) * rowSpacing);
+    for (const level of sortedLevels) {
+        const sorted = [...(byLevel.get(level) ?? [])].sort(
+            (a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title, 'uk'),
+        );
+        const span = Math.max(0, (sorted.length - 1) * rowStep);
         sorted.forEach((g, index) => {
             positions.set(g.id, {
-                x: col * levelSeparation,
-                y: index * rowSpacing - span / 2,
+                x: index * rowStep - span / 2,
+                y: level * levelStep,
             });
         });
     }
@@ -196,47 +196,139 @@ export function styledTopicNodes(
     });
 }
 
+const GROUP_TITLE_MAX = 34;
+
+function truncateGroupTitle(title: string, max = GROUP_TITLE_MAX): string {
+    const trimmed = title.trim();
+    if (trimmed.length <= max) return trimmed;
+    const slice = trimmed.slice(0, max - 1);
+    const lastSpace = slice.lastIndexOf(' ');
+    if (lastSpace > max * 0.55) return `${slice.slice(0, lastSpace)}…`;
+    return `${slice}…`;
+}
+
+function groupStatusLine(g: GroupData): string {
+    if (g.topicCount > 0 && g.completedCount === g.topicCount) {
+        return `✓ ${g.topicCount} тем · 100%`;
+    }
+    if (g.availableCount > 0) {
+        return `${g.topicCount} тем · ${g.progressPercent}%`;
+    }
+    if (g.topicCount === 0) return 'немає тем';
+    return `${g.topicCount} тем · заблоковано`;
+}
+
+function groupNodeColors(g: GroupData, isDark: boolean) {
+    const complete = g.topicCount > 0 && g.completedCount === g.topicCount;
+    const available = g.availableCount > 0;
+
+    if (complete) {
+        return {
+            background: isDark ? '#4338ca' : '#6366f1',
+            border: isDark ? '#a5b4fc' : '#4f46e5',
+            highlight: {
+                background: isDark ? '#6366f1' : '#818cf8',
+                border: '#ffffff',
+            },
+        };
+    }
+
+    if (available) {
+        return {
+            background: isDark ? '#047857' : '#10b981',
+            border: isDark ? '#6ee7b7' : '#059669',
+            highlight: {
+                background: isDark ? '#10b981' : '#34d399',
+                border: '#ffffff',
+            },
+        };
+    }
+
+    return {
+        background: isDark ? '#334155' : '#64748b',
+        border: isDark ? '#64748b' : '#475569',
+        highlight: {
+            background: isDark ? '#475569' : '#94a3b8',
+            border: '#ffffff',
+        },
+        opacity: 0.88,
+    };
+}
+
+function groupLabelFont() {
+    return {
+        size: 14,
+        color: '#ffffff',
+        face: 'DM Sans, system-ui, sans-serif',
+        align: 'center' as const,
+        multi: true,
+    };
+}
+
+function styledGroupEdges(
+    groupEdges: GroupEdgeData[],
+    isDark: boolean,
+): { from: string; to: string; width: number; dashes: number[] | boolean; smooth: object; color: object; arrows: object }[] {
+    const base = isDark ? 'rgba(165, 180, 252, 0.72)' : 'rgba(79, 70, 229, 0.55)';
+    const highlight = isDark ? '#c7d2fe' : '#6366f1';
+
+    return groupEdges.map((e) => {
+        const isRecommended = e.type === 'recommended_path';
+        return {
+            from: groupNodeId(e.from),
+            to: groupNodeId(e.to),
+            width: isRecommended ? 1.8 : 2.4,
+            dashes: isRecommended ? [10, 8] : false,
+            smooth: { enabled: true, type: 'cubicBezier', roundness: 0.42 },
+            color: {
+                color: base,
+                highlight,
+                hover: highlight,
+                opacity: isRecommended ? 0.65 : 0.9,
+            },
+            arrows: { to: { enabled: true, scaleFactor: 0.72, type: 'arrow' } },
+        };
+    });
+}
+
 export function buildGroupSuperGraph(
     groups: GroupData[],
     groupEdges: GroupEdgeData[],
-): { nodes: object[]; edges: { from: string; to: string }[] } {
+    isDark = false,
+): { nodes: object[]; edges: object[] } {
     const positions = layoutGroups(groups);
 
     const visNodes = groups.map((g) => {
         const pos = positions.get(g.id)!;
-        const bg =
-            g.completedCount === g.topicCount && g.topicCount > 0
-                ? '#6366f1'
-                : g.availableCount > 0
-                  ? '#10b981'
-                  : '#64748b';
+        const title = truncateGroupTitle(g.title);
 
         return {
             id: groupNodeId(g.id),
-            label: `${g.title}\n${g.topicCount} тем · ${g.progressPercent}%`,
-            title: `${g.title}\n${g.description ?? ''}\n\n${g.topicCount} тем\n✓ ${g.completedCount} · ◐ ${g.availableCount}\n\nКлік — відкрити групу`,
+            label: `${title}\n${groupStatusLine(g)}`,
+            title: `${g.title}\n${g.description ?? ''}\n\n${groupStatusLine(g)}\nРівень ${g.level + 1}\n\nКлік — відкрити групу`,
             x: pos.x,
             y: pos.y,
             fixed: { x: true, y: true },
             shape: 'box' as const,
-            size: Math.min(40, 22 + Math.sqrt(g.topicCount) * 2),
-            font: { size: 12, color: '#f8fafc', face: 'DM Sans, system-ui, sans-serif' },
-            color: {
-                background: bg,
-                border: '#a5b4fc',
-                highlight: { background: '#818cf8', border: '#ffffff' },
-            },
+            shapeProperties: { borderRadius: 12 },
+            widthConstraint: { minimum: 200, maximum: 248 },
+            heightConstraint: { minimum: 80, valign: 'middle' as const },
+            font: groupLabelFont(),
+            color: groupNodeColors(g, isDark),
             borderWidth: 2,
-            margin: 10,
+            margin: { top: 10, right: 12, bottom: 10, left: 12 },
+            shadow: {
+                enabled: true,
+                color: isDark ? 'rgba(15, 23, 42, 0.55)' : 'rgba(79, 70, 229, 0.18)',
+                size: 12,
+                x: 0,
+                y: 3,
+            },
+            labelHighlightBold: false,
         };
     });
 
-    const visEdges = groupEdges.map((e) => ({
-        from: groupNodeId(e.from),
-        to: groupNodeId(e.to),
-    }));
-
-    return { nodes: visNodes, edges: visEdges };
+    return { nodes: visNodes, edges: styledGroupEdges(groupEdges, isDark) };
 }
 
 export function filterGraphByGroup(

@@ -27,7 +27,11 @@ export default function GraphMapHUD({
                 <p>🖱 перетягни — рух</p>
                 <p>⚙ колесо — zoom</p>
                 {viewScope === 'groups' && (
-                    <p className="mt-1 text-primary">Клік по групі — відкрити теми</p>
+                    <>
+                        <p className="mt-1 text-primary">Клік по групі — відкрити теми</p>
+                        <p>↕ шлях навчання зверху вниз</p>
+                        <p>— ··· — рекомендований маршрут</p>
+                    </>
                 )}
                 {viewScope === 'topics' && groupTitle && (
                     <p className="mt-1 truncate" title={groupTitle}>

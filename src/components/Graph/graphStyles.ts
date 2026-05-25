@@ -29,12 +29,12 @@ export function buildViewGraphOptions(
     const edgeColor = isDark ? 'rgba(129, 140, 248, 0.55)' : 'rgba(79, 70, 229, 0.4)';
     const isDenseTopics = !superMode && nodeCount > 80;
 
-    const scaling = superMode
-        ? { min: 24, max: 44 }
-        : {
-              min: isDenseTopics ? 10 : 14,
-              max: isDenseTopics ? 22 : 28,
-          };
+    const topicScaling = {
+        min: isDenseTopics ? 10 : 14,
+        max: isDenseTopics ? 22 : 28,
+    };
+
+    const groupEdgeColor = isDark ? 'rgba(165, 180, 252, 0.7)' : 'rgba(79, 70, 229, 0.55)';
 
     return {
         layout: superMode
@@ -42,37 +42,56 @@ export function buildViewGraphOptions(
             : { hierarchical: { enabled: false } },
         nodes: {
             shape: superMode ? 'box' : 'dot',
-            size: superMode ? 32 : isDenseTopics ? 10 : 14,
+            size: superMode ? 36 : isDenseTopics ? 10 : 14,
             borderWidth: superMode ? 2 : isDenseTopics ? 1.5 : 2,
-            shadow: superMode || isDenseTopics
-                ? false
-                : {
+            shadow: superMode
+                ? {
                       enabled: true,
-                      color: isDark ? 'rgba(99, 102, 241, 0.4)' : 'rgba(79, 70, 229, 0.2)',
-                      size: 14,
+                      color: isDark ? 'rgba(15, 23, 42, 0.5)' : 'rgba(79, 70, 229, 0.16)',
+                      size: 12,
                       x: 0,
                       y: 3,
-                  },
+                  }
+                : isDenseTopics
+                  ? false
+                  : {
+                        enabled: true,
+                        color: isDark ? 'rgba(99, 102, 241, 0.4)' : 'rgba(79, 70, 229, 0.2)',
+                        size: 14,
+                        x: 0,
+                        y: 3,
+                    },
             font: {
                 size: superMode ? 14 : 12,
                 color: superMode ? '#f8fafc' : fontColor,
                 face: 'DM Sans, system-ui, sans-serif',
                 strokeWidth: superMode ? 0 : 2,
                 strokeColor: isDark ? '#0f172a' : '#f8fafc',
+                multi: superMode ? true : undefined,
             },
-            scaling,
-            margin: 10 as never,
+            ...(superMode ? {} : { scaling: topicScaling }),
+            margin: (superMode ? 12 : 10) as never,
         },
         edges: {
-            width: isDenseTopics ? 1 : 2,
-            smooth: { enabled: true, type: 'cubicBezier', roundness: isDenseTopics ? 0.2 : 0.35 },
-            color: {
-                color: edgeColor,
-                highlight: isDark ? '#a5b4fc' : '#6366f1',
-                hover: isDark ? '#c7d2fe' : '#818cf8',
-                opacity: isDenseTopics ? 0.45 : 0.85,
+            width: superMode ? 2.2 : isDenseTopics ? 1 : 2,
+            smooth: {
+                enabled: true,
+                type: 'cubicBezier',
+                roundness: superMode ? 0.42 : isDenseTopics ? 0.2 : 0.35,
             },
-            arrows: { to: { enabled: true, scaleFactor: isDenseTopics ? 0.45 : 0.7, type: 'arrow' } },
+            color: {
+                color: superMode ? groupEdgeColor : edgeColor,
+                highlight: isDark ? '#c7d2fe' : '#6366f1',
+                hover: isDark ? '#e0e7ff' : '#818cf8',
+                opacity: superMode ? 0.88 : isDenseTopics ? 0.45 : 0.85,
+            },
+            arrows: {
+                to: {
+                    enabled: true,
+                    scaleFactor: superMode ? 0.72 : isDenseTopics ? 0.45 : 0.7,
+                    type: 'arrow',
+                },
+            },
             shadow: false,
         },
         physics: { enabled: false },

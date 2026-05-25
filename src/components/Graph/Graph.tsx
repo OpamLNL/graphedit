@@ -175,7 +175,7 @@ export default function Graph({
     }, []);
 
     const getZoomLimits = useCallback(
-        () => limitsFromFitScale(fitScaleRef.current),
+        () => limitsFromFitScale(fitScaleRef.current, viewScopeRef.current),
         [],
     );
 
@@ -198,7 +198,7 @@ export default function Graph({
     }, [preferVisibleCanvasPoint]);
 
     const fitView = useCallback(
-        (animate = true) => {
+        (animate = true, padding = 56) => {
             const network = networkRef.current;
             const nodes = nodesDS.current;
             if (!network || !nodes || nodes.length === 0 || isDraggingViewRef.current) return;
@@ -207,7 +207,7 @@ export default function Graph({
             runProgrammaticMove(() => {
                 network.fit({
                     ...(ids.length > 0 ? { nodes: ids } : {}),
-                    padding: 56,
+                    padding,
                     animation: animate
                         ? { duration: 400, easingFunction: 'easeInOutQuad' }
                         : false,
@@ -298,7 +298,11 @@ export default function Graph({
             edgesDS.current.clear();
 
             if (isGroupView) {
-                const { nodes, edges } = buildGroupSuperGraph(data.groups, data.groupEdges);
+                const { nodes, edges } = buildGroupSuperGraph(
+                    data.groups,
+                    data.groupEdges,
+                    themeRef.current === 'dark',
+                );
                 const positions = layoutGroups(data.groups);
                 nodeLayoutRef.current = positions;
                 nodesDS.current.add(nodes);
@@ -319,7 +323,7 @@ export default function Graph({
             }
 
             if (viewChanged && animate && nodesDS.current.length > 0) {
-                requestAnimationFrame(() => fitView());
+                requestAnimationFrame(() => fitView(true, isGroupView ? 88 : 56));
             }
         },
         [fitView],
@@ -338,6 +342,18 @@ export default function Graph({
             prevActiveNodeIdRef.current,
         );
         prevActiveNodeIdRef.current = nodeId;
+    }, []);
+
+    const patchGroupStyles = useCallback(() => {
+        const data = payloadRef.current;
+        if (!data || !nodesDS.current || !edgesDS.current || viewScopeRef.current !== 'groups') {
+            return;
+        }
+
+        const isDark = themeRef.current === 'dark';
+        const { nodes, edges } = buildGroupSuperGraph(data.groups, data.groupEdges, isDark);
+        nodesDS.current.update(nodes);
+        edgesDS.current.update(edges);
     }, []);
 
     const patchTopicStyles = useCallback(() => {
@@ -567,8 +583,10 @@ export default function Graph({
         );
         if (viewScope === 'topics') {
             patchTopicStyles();
+        } else if (viewScope === 'groups') {
+            patchGroupStyles();
         }
-    }, [theme, viewScope, selectedGroupId, payload, patchTopicStyles]);
+    }, [theme, viewScope, selectedGroupId, payload, patchTopicStyles, patchGroupStyles]);
 
     useEffect(() => {
         const el = shellRef.current;
@@ -595,7 +613,7 @@ export default function Graph({
                 viewScope={viewScope}
                 groupTitle={selectedGroup?.title ?? null}
                 activeNodeTitle={activeNodeTitle}
-                onFit={() => fitView()}
+                onFit={() => fitView(true, viewScope === 'groups' ? 88 : 56)}
                 onRecenter={() => {
                     const id = activeNodeIdRef.current;
                     if (id != null) focusNodeById(id, true);
