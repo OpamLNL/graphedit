@@ -144,8 +144,7 @@ export default function ProfilePage() {
                         <h1 className="font-display text-2xl md:text-3xl font-bold mb-1 truncate">
                             {displayName}
                         </h1>
-                        <p className="text-sm opacity-60 mb-3 truncate">{cabinet.user.email}</p>
-                        <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                        <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mt-2">
                             <span className="badge badge-primary badge-outline">
                                 {ROLE_LABELS[profileRole] ?? profileRole}
                             </span>
@@ -316,9 +315,9 @@ function MapProgressCard({
                     </div>
                     {map.teachingStats.topStudents.length > 0 && (
                         <ul className="pt-1 space-y-1 border-t border-base-content/5">
-                            {map.teachingStats.topStudents.map((student) => (
+                            {map.teachingStats.topStudents.map((student, index) => (
                                 <li
-                                    key={student.email}
+                                    key={`${student.name}-${index}`}
                                     className="flex items-center justify-between gap-2 text-[10px]"
                                 >
                                     <span className="truncate opacity-70">{student.name}</span>
