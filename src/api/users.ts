@@ -17,6 +17,25 @@ export interface CabinetMapProgress {
     percent: number;
 }
 
+export interface CabinetMapTeachingStats {
+    nodeCount: number;
+    studentsTotal: number;
+    studentsActive: number;
+    averagePercent: number;
+    completionDistribution: {
+        notStarted: number;
+        inProgress: number;
+        completed: number;
+    };
+    topStudents: {
+        name: string;
+        email: string;
+        percent: number;
+        completed: number;
+        total: number;
+    }[];
+}
+
 export interface CabinetMapItem {
     id: number;
     title: string;
@@ -25,6 +44,14 @@ export interface CabinetMapItem {
     updatedAt: string;
     ownerUid: string | null;
     progress: CabinetMapProgress | null;
+    teachingStats: CabinetMapTeachingStats | null;
+}
+
+export interface CabinetTeachingSummary {
+    publishedMaps: number;
+    studentsActive: number;
+    averagePercent: number;
+    completedFully: number;
 }
 
 export interface CabinetData {
@@ -35,6 +62,7 @@ export interface CabinetData {
         mapsWithProgress: number;
         averagePercent: number;
     };
+    teachingStats: CabinetTeachingSummary | null;
     maps: CabinetMapItem[];
     recentCompleted: {
         topicId: number;

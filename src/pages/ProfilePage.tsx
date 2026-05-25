@@ -73,8 +73,56 @@ export default function ProfilePage() {
 
     if (!cabinet) return null;
 
-    const { stats, maps, recentCompleted } = cabinet;
+    const { stats, maps, recentCompleted, teachingStats } = cabinet;
     const profileRole = cabinet.user.role ?? role ?? 'student';
+    const isTeacher = profileRole === 'teacher';
+    const showTeachingStats = isTeacher && teachingStats != null;
+
+    const statCards = showTeachingStats
+        ? [
+              {
+                  label: 'Опубліковано карт',
+                  value: teachingStats.publishedMaps,
+                  color: '',
+              },
+              {
+                  label: 'Активних проходжень',
+                  value: teachingStats.studentsActive,
+                  color: 'text-primary',
+              },
+              {
+                  label: 'Сер. прогрес студентів',
+                  value: `${teachingStats.averagePercent}%`,
+                  color: 'text-primary',
+              },
+              {
+                  label: 'Завершили карту',
+                  value: teachingStats.completedFully,
+                  color: 'text-success',
+              },
+          ]
+        : [
+              {
+                  label: 'Вивчено тем',
+                  value: stats.totalCompletedTopics,
+                  color: 'text-success',
+              },
+              {
+                  label: 'Середній прогрес',
+                  value: `${stats.averagePercent}%`,
+                  color: 'text-primary',
+              },
+              {
+                  label: 'Карт доступно',
+                  value: stats.mapsTotal,
+                  color: '',
+              },
+              {
+                  label: 'З прогресом',
+                  value: stats.mapsWithProgress,
+                  color: 'opacity-80',
+              },
+          ];
 
     return (
         <div className="max-w-5xl mx-auto px-4 py-10">
@@ -121,34 +169,24 @@ export default function ProfilePage() {
             </section>
 
             <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                {[
-                    {
-                        label: 'Вивчено тем',
-                        value: stats.totalCompletedTopics,
-                        color: 'text-success',
-                    },
-                    {
-                        label: 'Середній прогрес',
-                        value: `${stats.averagePercent}%`,
-                        color: 'text-primary',
-                    },
-                    {
-                        label: 'Карт доступно',
-                        value: stats.mapsTotal,
-                        color: '',
-                    },
-                    {
-                        label: 'З прогресом',
-                        value: stats.mapsWithProgress,
-                        color: 'opacity-80',
-                    },
-                ].map((s) => (
+                {statCards.map((s) => (
                     <div key={s.label} className="glass-card p-4 text-center">
                         <div className={`text-2xl md:text-3xl font-bold ${s.color}`}>{s.value}</div>
                         <div className="text-xs opacity-55 mt-1">{s.label}</div>
                     </div>
                 ))}
             </section>
+
+            {showTeachingStats && teachingStats.publishedMaps > 0 && (
+                <section className="mb-8">
+                    <h2 className="font-display text-xl font-bold mb-4">
+                        Проходження студентами
+                    </h2>
+                    <p className="text-sm opacity-55 mb-4 -mt-2">
+                        Статистика по опублікованих картах, які ви створили
+                    </p>
+                </section>
+            )}
 
             <section className="mb-8">
                 <div className="flex items-center justify-between gap-4 mb-4">
@@ -244,7 +282,57 @@ function MapProgressCard({
                 <p className="text-xs opacity-55 line-clamp-2">{map.description}</p>
             )}
 
-            {map.progress ? (
+            {map.teachingStats && map.status === 'published' && isOwner && (
+                <div className="rounded-xl border border-base-content/10 bg-base-200/30 p-3 space-y-2">
+                    <p className="text-xs font-semibold opacity-70">Проходження студентами</p>
+                    <div className="flex justify-between text-xs">
+                        <span className="opacity-60">Сер. прогрес</span>
+                        <span className="font-semibold text-primary">
+                            {map.teachingStats.averagePercent}%
+                        </span>
+                    </div>
+                    <progress
+                        className="progress progress-success w-full h-1.5"
+                        value={map.teachingStats.averagePercent}
+                        max={100}
+                    />
+                    <div className="grid grid-cols-3 gap-2 text-[10px] text-center">
+                        <div>
+                            <div className="font-bold">{map.teachingStats.studentsActive}</div>
+                            <div className="opacity-45">активних</div>
+                        </div>
+                        <div>
+                            <div className="font-bold">
+                                {map.teachingStats.completionDistribution.inProgress}
+                            </div>
+                            <div className="opacity-45">в процесі</div>
+                        </div>
+                        <div>
+                            <div className="font-bold text-success">
+                                {map.teachingStats.completionDistribution.completed}
+                            </div>
+                            <div className="opacity-45">завершили</div>
+                        </div>
+                    </div>
+                    {map.teachingStats.topStudents.length > 0 && (
+                        <ul className="pt-1 space-y-1 border-t border-base-content/5">
+                            {map.teachingStats.topStudents.map((student) => (
+                                <li
+                                    key={student.email}
+                                    className="flex items-center justify-between gap-2 text-[10px]"
+                                >
+                                    <span className="truncate opacity-70">{student.name}</span>
+                                    <span className="shrink-0 font-medium">
+                                        {student.completed}/{student.total} · {student.percent}%
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {map.progress && !(map.teachingStats && isOwner) ? (
                 <div>
                     <div className="flex justify-between text-xs mb-1.5">
                         <span className="opacity-60">
@@ -263,13 +351,13 @@ function MapProgressCard({
                         <span>🔒 {map.progress.locked}</span>
                     </div>
                 </div>
-            ) : (
+            ) : !map.teachingStats || !isOwner ? (
                 <p className="text-xs opacity-45">
                     {map.status === 'draft'
                         ? 'Чернетка — опублікуйте для студентів'
                         : 'Немає вузлів для відстеження прогресу'}
                 </p>
-            )}
+            ) : null}
 
             <p className="text-[10px] opacity-35">Оновлено {updated}</p>
 
