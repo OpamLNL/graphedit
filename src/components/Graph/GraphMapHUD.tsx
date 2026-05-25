@@ -68,12 +68,14 @@ export default function GraphMapHUD({
             </div>
 
             {/* Підказка навігації */}
-            <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg border border-base-content/10 bg-base-100/85 backdrop-blur-sm px-2.5 py-1.5 text-[10px] opacity-70 shadow-sm max-w-[200px]">
+            <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg border border-base-content/10 bg-base-100/85 backdrop-blur-sm px-2.5 py-1.5 text-[10px] opacity-70 shadow-sm max-w-[220px]">
                 <p>🖱 перетягни — рух карти</p>
-                <p>⚙ колесо — наблизити / віддалити</p>
+                <p>⚙ колесо — zoom</p>
+                <p className="mt-1 opacity-80">◎ — центрувати вузол (zoom не змінюється)</p>
+                <p className="opacity-80">⊞ — показати весь рівень</p>
                 {activeNodeTitle && (
                     <p className="mt-1 text-warning truncate" title={activeNodeTitle}>
-                        ◎ {activeNodeTitle}
+                        ★ {activeNodeTitle}
                     </p>
                 )}
             </div>

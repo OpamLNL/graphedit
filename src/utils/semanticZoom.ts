@@ -104,7 +104,6 @@ export function buildLevelSuperGraph(
             ...node,
             x: pos.x,
             y: pos.y,
-            fixed: { x: true, y: true },
         };
     });
 
@@ -150,8 +149,9 @@ export function styledDetailNodes(
     activeNodeId: number | null = null,
 ) {
     const positions = layoutNodesByLevel(nodes, {
-        levelSeparation: isLarge ? 180 : 220,
-        nodeSpacing: isLarge ? 38 : 52,
+        levelSeparation: isLarge ? 160 : 200,
+        nodeSpacing: isLarge ? 44 : 52,
+        normalizeColumns: true,
     });
 
     return nodes.map((node) => {
@@ -164,7 +164,6 @@ export function styledDetailNodes(
             level: node.level,
             x: pos?.x,
             y: pos?.y,
-            fixed: { x: true, y: true },
             color: colorForNode(node, isActive),
             size: isActive ? (isLarge ? 16 : 28) : isLarge ? 10 : 22,
             borderWidth: isActive ? 3 : isLarge ? 1.5 : 3,

@@ -3,6 +3,8 @@ import { Network, DataSet } from 'vis-network/standalone';
 import { useTheme } from '../../context/ThemeContext';
 import { buildViewGraphOptions } from './graphStyles';
 import GraphMapHUD from './GraphMapHUD';
+import { buildFocusMoveTo } from '../../utils/graphViewport';
+import { layoutNodesByLevel } from '../../utils/levelLayout';
 import {
     buildLevelSuperGraph,
     isSuperNodeId,
@@ -45,25 +47,28 @@ interface GraphProps {
 }
 
 export default function Graph({
-    nodes,
-    edges,
-    onNodeClick,
-    activeNodeId,
-    activeNodeTitle = null,
-    selectedLevel = null,
-    levelRange = [],
-    mode = 'view',
-    semanticZoom = false,
-    onZoomModeChange,
-    onLevelFocus,
-}: GraphProps) {
+                                  nodes,
+                                  edges,
+                                  onNodeClick,
+                                  activeNodeId,
+                                  activeNodeTitle = null,
+                                  selectedLevel = null,
+                                  levelRange = [],
+                                  mode = 'view',
+                                  semanticZoom = false,
+                                  onZoomModeChange,
+                                  onLevelFocus,
+                              }: GraphProps) {
     const shellRef = useRef<HTMLDivElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
     const networkRef = useRef<Network | null>(null);
     const nodesDS = useRef<DataSet<{ id: number | string }> | null>(null);
     const edgesDS = useRef<DataSet<{ from: number | string; to: number | string }> | null>(null);
+
     const zoomModeRef = useRef<ZoomDisplayMode>('detail');
     const zoomTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const programmaticMoveRef = useRef(false);
+
     const sourceRef = useRef({ nodes, edges });
     const { theme } = useTheme();
 
@@ -73,46 +78,32 @@ export default function Graph({
     const onNodeClickRef = useRef(onNodeClick);
     const onLevelFocusRef = useRef(onLevelFocus);
     const onZoomModeChangeRef = useRef(onZoomModeChange);
-    const activeNodeIdRef = useRef(activeNodeId);
+    const activeNodeIdRef = useRef<number | null>(activeNodeId ?? null);
     const prevActiveNodeIdRef = useRef<number | null>(null);
-    const focusTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-    const mountedRef = useRef(true);
 
-    const clearFocusTimers = useCallback(() => {
-        for (const timer of focusTimersRef.current) clearTimeout(timer);
-        focusTimersRef.current = [];
-    }, []);
-
-    const scheduleFocusAttempt = useCallback((fn: () => void, delay: number) => {
-        const timer = setTimeout(() => {
-            if (!mountedRef.current || !networkRef.current) return;
-            fn();
-        }, delay);
-        focusTimersRef.current.push(timer);
-    }, []);
-
-    const fitView = useCallback((animate = true) => {
-        const network = networkRef.current;
-        if (!network) return;
-        network.fit({
-            padding: 48,
-            animation: animate
-                ? { duration: 450, easingFunction: 'easeInOutQuad' }
-                : false,
-        });
-    }, []);
-
-    const zoomBy = useCallback((factor: number) => {
-        const network = networkRef.current;
-        if (!network) return;
-        const scale = network.getScale() * factor;
-        network.moveTo({
-            scale: Math.min(4, Math.max(0.08, scale)),
-            animation: { duration: 200, easingFunction: 'easeInOutQuad' },
-        });
-    }, []);
+    const isLarge = nodes.length > 80;
 
     activeNodeIdRef.current = activeNodeId ?? null;
+    sourceRef.current = { nodes, edges };
+    themeRef.current = theme;
+    modeRef.current = mode;
+    semanticZoomRef.current = semanticZoom;
+    onNodeClickRef.current = onNodeClick;
+    onLevelFocusRef.current = onLevelFocus;
+    onZoomModeChangeRef.current = onZoomModeChange;
+
+    const layoutPositions = useMemo(
+        () =>
+            layoutNodesByLevel(nodes, {
+                levelSeparation: isLarge ? 160 : 200,
+                nodeSpacing: isLarge ? 44 : 52,
+                normalizeColumns: true,
+            }),
+        [nodes, isLarge],
+    );
+
+    const layoutPositionsRef = useRef(layoutPositions);
+    layoutPositionsRef.current = layoutPositions;
 
     const resolvedLevelRange = useMemo(
         () =>
@@ -122,143 +113,154 @@ export default function Graph({
         [levelRange, nodes],
     );
 
-    sourceRef.current = { nodes, edges };
-    themeRef.current = theme;
-    modeRef.current = mode;
-    semanticZoomRef.current = semanticZoom;
-    onNodeClickRef.current = onNodeClick;
-    onLevelFocusRef.current = onLevelFocus;
-    onZoomModeChangeRef.current = onZoomModeChange;
+    const runProgrammaticMove = useCallback((callback: () => void, duration = 450) => {
+        programmaticMoveRef.current = true;
+        callback();
 
-    const applyDisplay = useCallback((network: Network, display: ZoomDisplayMode, animate = true) => {
-        const { nodes: srcNodes, edges: srcEdges } = sourceRef.current;
-        const isLarge = srcNodes.length > 80;
-        const isSuper = display === 'super' && semanticZoomRef.current && isLarge;
+        window.setTimeout(() => {
+            programmaticMoveRef.current = false;
+        }, duration);
+    }, []);
 
-        if (!nodesDS.current || !edgesDS.current) return;
-
-        network.setOptions(
-            buildViewGraphOptions(themeRef.current, modeRef.current, srcNodes.length, isSuper),
-        );
-
-        if (isSuper) {
-            const { nodes: superNodes, edges: superEdges } = buildLevelSuperGraph(srcNodes, srcEdges);
-            nodesDS.current.clear();
-            edgesDS.current.clear();
-            nodesDS.current.add(superNodes);
-            edgesDS.current.add(superEdges);
-        } else {
-            nodesDS.current.clear();
-            edgesDS.current.clear();
-            nodesDS.current.add(styledDetailNodes(srcNodes, isLarge, activeNodeIdRef.current));
-            edgesDS.current.add(srcEdges);
-        }
-
-        zoomModeRef.current = display;
-        onZoomModeChangeRef.current?.(display);
-
-        if (animate) {
-            fitView();
-        }
-    }, [fitView]);
-
-    const focusNodeById = useCallback(
-        (id: number) => {
+    const fitView = useCallback(
+        (animate = true) => {
             const network = networkRef.current;
-            if (!network || !nodesDS.current?.get(id)) return;
+            if (!network || !nodesDS.current) return;
 
-            const isLarge = sourceRef.current.nodes.length > 80;
-            const targetScale = isLarge ? 1.35 : 1.15;
-            const animation = { duration: 600, easingFunction: 'easeInOutQuad' as const };
+            const ids = nodesDS.current.getIds();
 
-            let settled = false;
-
-            const centerOnNode = (): boolean => {
-                const net = networkRef.current;
-                if (settled || !net || !nodesDS.current?.get(id)) return settled;
-
-                const positions = net.getPositions([id]);
-                const pos = positions[id];
-                if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return false;
-
-                settled = true;
-                net.selectNodes([id]);
-                net.moveTo({
-                    position: { x: pos.x, y: pos.y },
-                    scale: targetScale,
-                    offset: { x: 0, y: 0 },
-                    animation,
-                });
-                return true;
-            };
-
-            if (centerOnNode()) return;
-
-            const onLayoutDone = () => {
-                if (!networkRef.current) return;
-                centerOnNode();
-                networkRef.current.off('stabilizationIterationsDone', onLayoutDone);
-                networkRef.current.off('stabilized', onLayoutDone);
-            };
-            network.on('stabilizationIterationsDone', onLayoutDone);
-            network.on('stabilized', onLayoutDone);
-
-            let drawAttempts = 0;
-            const onAfterDraw = () => {
-                if (!networkRef.current) return;
-                if (centerOnNode() || ++drawAttempts >= 12) {
-                    networkRef.current.off('afterDrawing', onAfterDraw);
+            runProgrammaticMove(() => {
+                if (ids.length === 0) {
+                    network.fit({
+                        animation: animate
+                            ? { duration: 400, easingFunction: 'easeInOutQuad' }
+                            : false,
+                    });
+                    return;
                 }
-            };
-            network.on('afterDrawing', onAfterDraw);
 
-            for (const delay of [50, 150, 350, 700, 1200, 2000]) {
-                scheduleFocusAttempt(centerOnNode, delay);
-            }
+                network.fit({
+                    nodes: ids,
+                    animation: animate
+                        ? { duration: 400, easingFunction: 'easeInOutQuad' }
+                        : false,
+                });
+            });
         },
-        [scheduleFocusAttempt],
+        [runProgrammaticMove],
     );
 
-    const ensureDetailAndFocus = useCallback(
-        (id: number) => {
+    const zoomBy = useCallback(
+        (factor: number) => {
             const network = networkRef.current;
             if (!network) return;
 
-            clearFocusTimers();
-
-            const runFocus = () => {
-                if (!networkRef.current || !nodesDS.current?.get(id)) return;
-                focusNodeById(id);
-            };
-
-            if (zoomModeRef.current === 'super') {
-                applyDisplay(network, 'detail', false);
-                network.once('stabilized', runFocus);
-                network.once('stabilizationIterationsDone', runFocus);
-                for (const delay of [80, 250, 600, 1200]) {
-                    scheduleFocusAttempt(runFocus, delay);
-                }
-            } else {
-                runFocus();
-            }
+            runProgrammaticMove(
+                () => {
+                    network.moveTo({
+                        scale: Math.min(3, Math.max(0.1, network.getScale() * factor)),
+                        animation: { duration: 180, easingFunction: 'easeInOutQuad' },
+                    });
+                },
+                220,
+            );
         },
-        [applyDisplay, focusNodeById, clearFocusTimers, scheduleFocusAttempt],
+        [runProgrammaticMove],
     );
 
-    // Ініціалізація мережі — лише коли змінюються дані/тема/режим
+    const focusNodeById = useCallback(
+        (id: number, preserveScale = false) => {
+            const network = networkRef.current;
+            if (!network || !nodesDS.current?.get(id)) return;
+
+            const pos = layoutPositionsRef.current.get(id);
+            if (!pos) return;
+
+            network.selectNodes([id]);
+
+            const moveOpts = buildFocusMoveTo(
+                pos,
+                preserveScale ? network.getScale() : undefined,
+            );
+
+            runProgrammaticMove(() => {
+                network.moveTo(moveOpts);
+            });
+        },
+        [runProgrammaticMove],
+    );
+
+    const applyDisplay = useCallback(
+        (network: Network, display: ZoomDisplayMode, animate = true) => {
+            const { nodes: srcNodes, edges: srcEdges } = sourceRef.current;
+            const large = srcNodes.length > 80;
+            const isSuper = display === 'super' && semanticZoomRef.current && large;
+
+            if (!nodesDS.current || !edgesDS.current) return;
+
+            network.setOptions(
+                buildViewGraphOptions(themeRef.current, modeRef.current, srcNodes.length, isSuper),
+            );
+
+            nodesDS.current.clear();
+            edgesDS.current.clear();
+
+            if (isSuper) {
+                const { nodes: superNodes, edges: superEdges } = buildLevelSuperGraph(
+                    srcNodes,
+                    srcEdges,
+                );
+
+                nodesDS.current.add(superNodes);
+                edgesDS.current.add(superEdges);
+            } else {
+                nodesDS.current.add(styledDetailNodes(srcNodes, large, activeNodeIdRef.current));
+                edgesDS.current.add(srcEdges);
+            }
+
+            zoomModeRef.current = display;
+            onZoomModeChangeRef.current?.(display);
+
+            if (animate && display === 'super') {
+                fitView();
+            }
+        },
+        [fitView],
+    );
+
+    const focusActiveNode = useCallback(
+        (preserveScale = false) => {
+            const id = activeNodeIdRef.current;
+
+            if (id == null) {
+                fitView();
+                return;
+            }
+
+            if (zoomModeRef.current === 'super') {
+                const network = networkRef.current;
+                if (!network) return;
+
+                applyDisplay(network, 'detail', false);
+                requestAnimationFrame(() => focusNodeById(id, preserveScale));
+                return;
+            }
+
+            focusNodeById(id, preserveScale);
+        },
+        [applyDisplay, fitView, focusNodeById],
+    );
+
     useEffect(() => {
-        mountedRef.current = true;
         if (!containerRef.current) return;
 
-        clearFocusTimers();
-
-        const isLarge = nodes.length > 80;
         const startSuper = semanticZoom && isLarge;
-
         const superGraph = startSuper ? buildLevelSuperGraph(nodes, edges) : null;
+
         const initialNodes = startSuper
             ? superGraph!.nodes
             : styledDetailNodes(nodes, isLarge, activeNodeIdRef.current);
+
         const initialEdges = startSuper ? superGraph!.edges : edges;
 
         nodesDS.current = new DataSet(initialNodes);
@@ -275,83 +277,101 @@ export default function Graph({
             { nodes: nodesDS.current, edges: edgesDS.current },
             buildViewGraphOptions(theme, mode, nodes.length, startSuper),
         );
-        networkRef.current = network;
 
+        networkRef.current = network;
         onZoomModeChangeRef.current?.(zoomModeRef.current);
 
         network.on('click', (params) => {
             if (params.nodes.length === 0) return;
+
             const clickedId = params.nodes[0];
 
             if (isSuperNodeId(clickedId)) {
                 const level = levelFromSuperId(String(clickedId));
+
                 onLevelFocusRef.current?.(level);
-                applyDisplay(network, 'detail');
-                network.moveTo({
-                    scale: 0.75,
-                    animation: { duration: 500, easingFunction: 'easeInOutQuad' },
-                });
-                setTimeout(() => {
-                    const first = sourceRef.current.nodes.find((n) => n.level === level);
-                    if (first) focusNodeById(first.id);
-                }, 150);
+                applyDisplay(network, 'detail', false);
+
+                const first = sourceRef.current.nodes.find((n) => n.level === level);
+                if (first) requestAnimationFrame(() => focusNodeById(first.id, false));
+
                 return;
             }
 
             if (typeof clickedId === 'number') {
                 onNodeClickRef.current?.(clickedId);
-                focusNodeById(clickedId);
+                focusNodeById(clickedId, false);
                 localStorage.setItem('lastFocusedNodeId', clickedId.toString());
             }
         });
 
         network.on('zoom', () => {
+            if (programmaticMoveRef.current) return;
             if (!semanticZoomRef.current || sourceRef.current.nodes.length <= 80) return;
 
             if (zoomTimerRef.current) clearTimeout(zoomTimerRef.current);
+
             zoomTimerRef.current = setTimeout(() => {
+                if (programmaticMoveRef.current) return;
+
                 const scale = network.getScale();
                 const next = resolveZoomMode(scale, zoomModeRef.current);
+
                 if (next !== zoomModeRef.current) {
-                    applyDisplay(network, next);
+                    applyDisplay(network, next, false);
                 }
             }, 120);
         });
 
-        window.__focusGraphNode = (id: number) => ensureDetailAndFocus(id);
+        window.__focusGraphNode = (id: number) => {
+            activeNodeIdRef.current = id;
+
+            if (zoomModeRef.current === 'super') {
+                applyDisplay(network, 'detail', false);
+                requestAnimationFrame(() => focusNodeById(id, false));
+            } else {
+                focusNodeById(id, false);
+            }
+        };
 
         window.__fitGraphView = () => fitView();
 
-        requestAnimationFrame(() => {
-            const pendingId = activeNodeIdRef.current;
-            if (pendingId != null && nodesDS.current?.get(pendingId)) {
-                focusNodeById(pendingId);
+        network.once('afterDrawing', () => {
+            if (activeNodeIdRef.current != null && nodesDS.current?.get(activeNodeIdRef.current)) {
+                focusNodeById(activeNodeIdRef.current, false);
             } else {
                 fitView(false);
             }
         });
 
         return () => {
-            mountedRef.current = false;
-            clearFocusTimers();
             if (zoomTimerRef.current) clearTimeout(zoomTimerRef.current);
+
             window.__focusGraphNode = undefined;
             window.__fitGraphView = undefined;
+
             network.destroy();
             networkRef.current = null;
             nodesDS.current = null;
             edgesDS.current = null;
         };
-    }, [nodes, edges, theme, mode, semanticZoom, applyDisplay, focusNodeById, clearFocusTimers, fitView]);
+    }, [
+        nodes,
+        edges,
+        theme,
+        mode,
+        semanticZoom,
+        isLarge,
+        applyDisplay,
+        focusNodeById,
+        fitView,
+    ]);
 
-    // Підсвітка обраного вузла + фокус
     useEffect(() => {
         if (activeNodeId == null) return;
         if (!sourceRef.current.nodes.some((n) => n.id === activeNodeId)) return;
 
-        const network = networkRef.current;
-        if (network && zoomModeRef.current === 'detail' && nodesDS.current) {
-            const isLarge = sourceRef.current.nodes.length > 80;
+        if (networkRef.current && zoomModeRef.current === 'detail' && nodesDS.current) {
             patchActiveNodeHighlight(
                 nodesDS.current,
                 sourceRef.current.nodes,
@@ -359,57 +379,35 @@ export default function Graph({
                 prevActiveNodeIdRef.current,
                 isLarge,
             );
+
             prevActiveNodeIdRef.current = activeNodeId;
         }
 
-        ensureDetailAndFocus(activeNodeId);
-    }, [activeNodeId, ensureDetailAndFocus]);
+        focusActiveNode(false);
+    }, [activeNodeId, focusActiveNode, isLarge]);
 
-    // Після зміни розміру контейнера — перерахувати viewport
     useEffect(() => {
         const el = shellRef.current;
         if (!el) return;
 
-        let timer: ReturnType<typeof setTimeout> | null = null;
-        const ro = new ResizeObserver(() => {
-            const network = networkRef.current;
-            if (!network) return;
-
-            network.redraw();
-            if (timer) clearTimeout(timer);
-            timer = setTimeout(() => {
-                const id = activeNodeIdRef.current;
-                if (id != null && nodesDS.current?.get(id)) {
-                    focusNodeById(id);
-                } else {
-                    fitView(false);
-                }
-            }, 100);
-        });
+        const ro = new ResizeObserver(() => networkRef.current?.redraw());
         ro.observe(el);
-        return () => {
-            ro.disconnect();
-            if (timer) clearTimeout(timer);
-        };
-    }, [focusNodeById, fitView]);
 
-    const handleRecenter = useCallback(() => {
-        const id = activeNodeIdRef.current;
-        if (id != null) focusNodeById(id);
-        else fitView();
-    }, [focusNodeById, fitView]);
+        return () => ro.disconnect();
+    }, []);
 
     return (
         <div ref={shellRef} className="absolute inset-0 graph-map-shell overflow-hidden rounded-lg">
             <div ref={containerRef} className="absolute inset-0 z-0" />
+
             <GraphMapHUD
                 selectedLevel={selectedLevel}
                 levelRange={resolvedLevelRange}
                 activeNodeTitle={activeNodeTitle}
                 onFit={() => fitView()}
-                onRecenter={handleRecenter}
-                onZoomIn={() => zoomBy(1.25)}
-                onZoomOut={() => zoomBy(0.8)}
+                onRecenter={() => focusActiveNode(true)}
+                onZoomIn={() => zoomBy(1.2)}
+                onZoomOut={() => zoomBy(1 / 1.2)}
             />
         </div>
     );

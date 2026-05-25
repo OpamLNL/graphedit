@@ -71,7 +71,7 @@ export function buildViewGraphOptions(
                 strokeWidth: 0,
             },
             scaling,
-            margin: superMode ? 14 : 10,
+            margin: 10 as never,
         },
         edges: {
             width: isLarge ? 1 : 2,
@@ -87,7 +87,7 @@ export function buildViewGraphOptions(
         },
         physics: { enabled: false },
         interaction: {
-            hover: true,
+            hover: false,
             dragNodes: mode === 'edit',
             dragView: true,
             zoomView: true,
@@ -142,7 +142,7 @@ export function buildHeroGraphOptions(theme: GraphTheme): Options {
             },
         },
         interaction: {
-            hover: true,
+            hover: false,
             dragNodes: false,
             dragView: false,
             zoomView: false,

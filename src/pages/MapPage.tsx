@@ -284,7 +284,7 @@ export default function MapPage() {
                             </div>
                         ) : (
                             <Graph
-                                key={`${viewMode}-${selectedLevel}-${zoomDisplay}`}
+                                key={`${viewMode}-${selectedLevel}`}
                                 nodes={displayGraph.nodes}
                                 edges={displayGraph.edges}
                                 onNodeClick={handleSelectNode}
