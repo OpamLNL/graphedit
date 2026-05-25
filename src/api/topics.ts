@@ -57,7 +57,9 @@ export const topicsApi = {
         const q = new URLSearchParams();
         if (params.search) q.set('search', params.search);
         if (params.mapId != null) q.set('mapId', String(params.mapId));
+        if (params.publishedOnly === true) q.set('publishedOnly', 'true');
         if (params.publishedOnly === false) q.set('publishedOnly', 'false');
+        if (params.usedOnly === true) q.set('usedOnly', 'true');
         if (params.usedOnly === false) q.set('usedOnly', 'false');
         if (params.sortBy) q.set('sortBy', params.sortBy);
         if (params.page != null) q.set('page', String(params.page));

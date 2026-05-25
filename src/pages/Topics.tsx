@@ -5,7 +5,6 @@ import {
     type TopicCatalogItem,
     type TopicCatalogParams,
 } from '../api/topics';
-import { useAuth } from '../context/AuthContext';
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
     const [debounced, setDebounced] = useState(value);
@@ -17,13 +16,10 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 export default function Topics() {
-    const { role } = useAuth();
-    const isEditor = role === 'admin' || role === 'teacher';
-
     const [search, setSearch] = useState('');
     const [mapId, setMapId] = useState<number | ''>('');
-    const [publishedOnly, setPublishedOnly] = useState(true);
-    const [usedOnly, setUsedOnly] = useState(true);
+    const [publishedOnly, setPublishedOnly] = useState(false);
+    const [usedOnly, setUsedOnly] = useState(false);
     const [sortBy, setSortBy] = useState<'title' | 'maps'>('title');
     const [page, setPage] = useState(1);
 
@@ -45,8 +41,8 @@ export default function Topics() {
         const params: TopicCatalogParams = {
             search: debouncedSearch || undefined,
             mapId: mapId !== '' ? mapId : undefined,
-            publishedOnly,
-            usedOnly,
+            publishedOnly: publishedOnly === true,
+            usedOnly: usedOnly === true,
             sortBy,
             page,
             limit: 48,
@@ -79,8 +75,8 @@ export default function Topics() {
             <div className="mb-8">
                 <h1 className="font-display text-3xl font-bold mb-2">Каталог тем</h1>
                 <p className="text-sm opacity-60 max-w-2xl">
-                    Знайдіть тему та перегляньте, у яких картах знань вона зустрічається.
-                    Пошук працює за назвою та описом.
+                    Знайдіть тему за назвою, описом або назвою вузла на карті.
+                    Якщо карта ще чернетка — увімкніть «Включно з чернетками».
                 </p>
             </div>
 
@@ -136,17 +132,15 @@ export default function Topics() {
                         <span className="label-text text-xs">Лише з картами</span>
                     </label>
 
-                    {isEditor && (
-                        <label className="label cursor-pointer gap-2 py-1">
-                            <input
-                                type="checkbox"
-                                className="checkbox checkbox-sm checkbox-primary"
-                                checked={!publishedOnly}
-                                onChange={(e) => setPublishedOnly(!e.target.checked)}
-                            />
-                            <span className="label-text text-xs">Включно з чернетками</span>
-                        </label>
-                    )}
+                    <label className="label cursor-pointer gap-2 py-1">
+                        <input
+                            type="checkbox"
+                            className="checkbox checkbox-sm checkbox-primary"
+                            checked={publishedOnly}
+                            onChange={(e) => setPublishedOnly(e.target.checked)}
+                        />
+                        <span className="label-text text-xs">Лише опубліковані карти</span>
+                    </label>
                 </div>
             </div>
 
@@ -166,8 +160,13 @@ export default function Topics() {
             )}
 
             {!loading && !error && items.length === 0 && (
-                <div className="glass-card p-10 text-center opacity-60">
-                    Нічого не знайдено. Спробуйте інший запит або змініть фільтри.
+                <div className="glass-card p-10 text-center opacity-60 space-y-2">
+                    <p>Нічого не знайдено. Спробуйте інший запит або змініть фільтри.</p>
+                    {publishedOnly && (
+                        <p className="text-xs">
+                            Якщо тема на чернетці карти — зніміть «Лише опубліковані карти».
+                        </p>
+                    )}
                 </div>
             )}
 
