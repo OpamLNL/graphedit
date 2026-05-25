@@ -77,7 +77,26 @@ export function groupIdFromNodeId(id: string): string {
     return id.slice(GROUP_NODE_PREFIX.length);
 }
 
-const TOPIC_SPACING = 48;
+const TOPIC_SPACING = 56;
+const TOPIC_LABEL_MAX = 52;
+
+function truncateTopicLabel(label: string, max = TOPIC_LABEL_MAX): string {
+    const trimmed = label.trim();
+    if (trimmed.length <= max) return trimmed;
+    return `${trimmed.slice(0, max - 1)}…`;
+}
+
+function topicLabelFont(isDark: boolean) {
+    return {
+        size: 12,
+        color: isDark ? '#e2e8f0' : '#334155',
+        face: 'DM Sans, system-ui, sans-serif',
+        align: 'center' as const,
+        background: isDark ? 'rgba(15, 23, 42, 0.72)' : 'rgba(248, 250, 252, 0.88)',
+        strokeWidth: 2,
+        strokeColor: isDark ? '#0f172a' : '#ffffff',
+    };
+}
 
 /** Теми однієї групи — вертикальна колонка за orderInGroup */
 export function layoutTopicsInGroup(nodes: NodeData[]): Map<number, { x: number; y: number }> {
@@ -154,20 +173,25 @@ export function styledTopicNodes(
     nodes: NodeData[],
     positions: Map<number, { x: number; y: number }>,
     activeNodeId: number | null,
+    isDark = false,
 ) {
     return nodes.map((node) => {
         const isActive = activeNodeId != null && node.id === activeNodeId;
         const pos = positions.get(node.id);
+        const label = truncateTopicLabel(node.label || node.title);
         return {
             id: node.id,
-            label: node.label,
+            label,
             title: `${node.title}\n${statusLabel(node.status)}${isActive ? '\n★ обрано' : ''}`,
             x: pos?.x,
             y: pos?.y,
             fixed: { x: true, y: true },
             color: topicColor(node.status, isActive),
-            size: isActive ? 18 : 12,
+            size: isActive ? 16 : 12,
             borderWidth: isActive ? 3 : 1.5,
+            font: topicLabelFont(isDark),
+            margin: { top: 2, right: 6, bottom: 12, left: 6 },
+            labelHighlightBold: false,
         };
     });
 }
@@ -258,9 +282,9 @@ export function patchTopicHighlight(
             updates.push({
                 id: activeNodeId,
                 color: topicColor(curr.status, true),
-                size: 18,
+                size: 16,
                 borderWidth: 3,
-                label: curr.label,
+                label: truncateTopicLabel(curr.label || curr.title),
             });
         }
     }

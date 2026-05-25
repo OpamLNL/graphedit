@@ -3,7 +3,12 @@ import { Network, DataSet } from 'vis-network/standalone';
 import { useTheme } from '../../context/ThemeContext';
 import { buildViewGraphOptions } from './graphStyles';
 import GraphMapHUD from './GraphMapHUD';
-import { buildFocusMoveTo } from '../../utils/graphViewport';
+import {
+    buildFocusMoveTo,
+    ensureGraphVisible,
+    limitsFromFitScale,
+    zoomAtDomPoint,
+} from '../../utils/graphViewport';
 import {
     buildGroupSuperGraph,
     filterGraphByGroup,
@@ -80,6 +85,33 @@ function getCanvasSize(container: HTMLElement | null) {
 
 const CLICK_SLOP_PX = 8;
 
+function resolveGroupClickId(params: {
+    nodes: (number | string)[];
+    items?: { nodeId?: number | string }[];
+}): string | null {
+    const fromNodes = params.nodes[0];
+    if (fromNodes != null && isGroupNodeId(fromNodes)) {
+        return groupIdFromNodeId(String(fromNodes));
+    }
+
+    const item = params.items?.find((i) => i.nodeId != null && isGroupNodeId(i.nodeId));
+    if (item?.nodeId != null) {
+        return groupIdFromNodeId(String(item.nodeId));
+    }
+
+    return null;
+}
+
+function visibleNodeCount(
+    data: GraphPayload,
+    scope: GraphViewScope,
+    groupId: string | null,
+): number {
+    if (scope === 'groups') return data.groups.length;
+    if (!groupId) return 0;
+    return data.nodes.filter((n) => n.groupId === groupId).length;
+}
+
 export default function Graph({
     payload,
     viewScope,
@@ -107,6 +139,9 @@ export default function Graph({
     const viewKeyRef = useRef('');
     const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
     const handleNodePickRef = useRef<(rawId: number | string) => void>(() => {});
+    const handleGroupPickRef = useRef<(groupId: string) => void>(() => {});
+    const lastGroupPickAtRef = useRef(0);
+    const fitScaleRef = useRef(0.85);
 
     const onGroupSelectRef = useRef(onGroupSelect);
     const onNodeClickRef = useRef(onNodeClick);
@@ -132,6 +167,36 @@ export default function Graph({
         }, duration);
     }, []);
 
+    const captureFitScale = useCallback(() => {
+        const network = networkRef.current;
+        if (!network) return;
+        const scale = network.getScale();
+        if (scale > 0) fitScaleRef.current = scale;
+    }, []);
+
+    const getZoomLimits = useCallback(
+        () => limitsFromFitScale(fitScaleRef.current),
+        [],
+    );
+
+    const preferVisibleCanvasPoint = useCallback((): { x: number; y: number } | null => {
+        const activeId = activeNodeIdRef.current;
+        if (activeId == null) return null;
+        return nodeLayoutRef.current.get(activeId) ?? null;
+    }, []);
+
+    const nudgeGraphIntoView = useCallback(() => {
+        const network = networkRef.current;
+        if (!network || isDraggingViewRef.current) return;
+
+        ensureGraphVisible(
+            network,
+            nodeLayoutRef.current,
+            getCanvasSize(containerRef.current),
+            preferVisibleCanvasPoint(),
+        );
+    }, [preferVisibleCanvasPoint]);
+
     const fitView = useCallback(
         (animate = true) => {
             const network = networkRef.current;
@@ -147,23 +212,47 @@ export default function Graph({
                         ? { duration: 400, easingFunction: 'easeInOutQuad' }
                         : false,
                 });
+
+                if (animate) {
+                    const onDone = () => {
+                        captureFitScale();
+                        network.off('animationFinished', onDone);
+                    };
+                    network.on('animationFinished', onDone);
+                } else {
+                    requestAnimationFrame(captureFitScale);
+                }
             });
         },
-        [runProgrammaticMove],
+        [runProgrammaticMove, captureFitScale],
     );
 
     const zoomBy = useCallback(
         (factor: number) => {
             const network = networkRef.current;
-            if (!network) return;
+            const container = containerRef.current;
+            if (!network || !container) return;
+
+            const canvasSize = getCanvasSize(container);
+            const limits = getZoomLimits();
+            const activeId = activeNodeIdRef.current;
+            let anchorDom = { x: canvasSize.width / 2, y: canvasSize.height / 2 };
+
+            if (activeId != null) {
+                const pos = nodeLayoutRef.current.get(activeId);
+                if (pos) {
+                    anchorDom = network.canvasToDOM(pos);
+                    anchorDom.x = Math.max(0, Math.min(canvasSize.width, anchorDom.x));
+                    anchorDom.y = Math.max(0, Math.min(canvasSize.height, anchorDom.y));
+                }
+            }
+
             runProgrammaticMove(() => {
-                network.moveTo({
-                    scale: Math.min(3, Math.max(0.08, network.getScale() * factor)),
-                    animation: { duration: 180, easingFunction: 'easeInOutQuad' },
-                });
+                zoomAtDomPoint(network, anchorDom, factor, canvasSize, limits);
+                nudgeGraphIntoView();
             }, 220);
         },
-        [runProgrammaticMove],
+        [runProgrammaticMove, getZoomLimits, nudgeGraphIntoView],
     );
 
     const focusNodeById = useCallback(
@@ -197,7 +286,12 @@ export default function Graph({
             viewKeyRef.current = viewKey;
 
             network.setOptions(
-                buildViewGraphOptions(themeRef.current, 'view', data.nodes.length, isGroupView),
+                buildViewGraphOptions(
+                    themeRef.current,
+                    'view',
+                    visibleNodeCount(data, scope, groupId),
+                    isGroupView,
+                ),
             );
 
             nodesDS.current.clear();
@@ -214,7 +308,12 @@ export default function Graph({
                 const layout = layoutTopicsInGroup(nodes);
                 nodeLayoutRef.current = layout;
                 nodesDS.current.add(
-                    styledTopicNodes(nodes, layout, activeNodeIdRef.current),
+                    styledTopicNodes(
+                        nodes,
+                        layout,
+                        activeNodeIdRef.current,
+                        themeRef.current === 'dark',
+                    ),
                 );
                 edgesDS.current.add(edges);
             }
@@ -250,7 +349,12 @@ export default function Graph({
         const layout = layoutTopicsInGroup(nodes);
         nodeLayoutRef.current = layout;
         nodesDS.current.update(
-            styledTopicNodes(nodes, layout, activeNodeIdRef.current),
+            styledTopicNodes(
+                nodes,
+                layout,
+                activeNodeIdRef.current,
+                themeRef.current === 'dark',
+            ),
         );
     }, []);
 
@@ -260,6 +364,8 @@ export default function Graph({
             return;
         }
 
+        if (viewScopeRef.current !== 'topics') return;
+
         const nodeId = typeof rawId === 'number' ? rawId : Number(rawId);
         if (Number.isNaN(nodeId)) return;
 
@@ -268,6 +374,13 @@ export default function Graph({
         highlightTopicNode(nodeId);
         focusNodeById(nodeId, false);
         localStorage.setItem('lastFocusedNodeId', nodeId.toString());
+    };
+
+    handleGroupPickRef.current = (groupId: string) => {
+        const now = Date.now();
+        if (now - lastGroupPickAtRef.current < 250) return;
+        lastGroupPickAtRef.current = now;
+        onGroupSelectRef.current?.(groupId);
     };
 
     // Ініціалізація vis-network один раз
@@ -293,6 +406,8 @@ export default function Graph({
         });
 
         const tryPickAtClient = (clientX: number, clientY: number) => {
+            if (viewScopeRef.current === 'groups') return;
+
             const down = pointerDownRef.current;
             pointerDownRef.current = null;
             if (!down) return;
@@ -311,13 +426,46 @@ export default function Graph({
             handleNodePickRef.current(nodeId);
         };
 
+        const tryPickGroupAtClient = (clientX: number, clientY: number) => {
+            if (viewScopeRef.current !== 'groups') return;
+
+            const down = pointerDownRef.current;
+            pointerDownRef.current = null;
+            if (!down) return;
+            if (Math.hypot(clientX - down.x, clientY - down.y) > CLICK_SLOP_PX) return;
+
+            const net = networkRef.current;
+            if (!net) return;
+
+            const rect = container.getBoundingClientRect();
+            const nodeId = net.getNodeAt({
+                x: clientX - rect.left,
+                y: clientY - rect.top,
+            });
+            if (nodeId == null || !isGroupNodeId(nodeId)) return;
+
+            handleGroupPickRef.current(groupIdFromNodeId(String(nodeId)));
+        };
+
+        network.on('click', (params) => {
+            if (viewScopeRef.current !== 'groups') return;
+            pointerDownRef.current = null;
+
+            const groupId = resolveGroupClickId(params);
+            if (groupId) handleGroupPickRef.current(groupId);
+        });
+
         const onMouseDown = (e: MouseEvent) => {
             if (e.button !== 0) return;
             pointerDownRef.current = { x: e.clientX, y: e.clientY };
         };
         const onMouseUp = (e: MouseEvent) => {
             if (e.button !== 0) return;
-            tryPickAtClient(e.clientX, e.clientY);
+            if (viewScopeRef.current === 'groups') {
+                tryPickGroupAtClient(e.clientX, e.clientY);
+            } else {
+                tryPickAtClient(e.clientX, e.clientY);
+            }
         };
         const onTouchStart = (e: TouchEvent) => {
             const t = e.changedTouches[0];
@@ -327,7 +475,11 @@ export default function Graph({
         const onTouchEnd = (e: TouchEvent) => {
             const t = e.changedTouches[0];
             if (!t) return;
-            tryPickAtClient(t.clientX, t.clientY);
+            if (viewScopeRef.current === 'groups') {
+                tryPickGroupAtClient(t.clientX, t.clientY);
+            } else {
+                tryPickAtClient(t.clientX, t.clientY);
+            }
         };
 
         container.addEventListener('mousedown', onMouseDown);
@@ -344,15 +496,11 @@ export default function Graph({
 
             const rect = container.getBoundingClientRect();
             const pointer = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-            const canvasPoint = net.DOMtoCanvas(pointer);
+            const canvasSize = { width: rect.width, height: rect.height };
             const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-            const nextScale = Math.min(3, Math.max(0.08, net.getScale() * factor));
 
-            net.moveTo({
-                position: canvasPoint,
-                scale: nextScale,
-                animation: false,
-            });
+            zoomAtDomPoint(net, pointer, factor, canvasSize, getZoomLimits());
+            nudgeGraphIntoView();
         };
 
         container.addEventListener('wheel', handleWheel, { passive: false });
@@ -376,7 +524,7 @@ export default function Graph({
             nodesDS.current = null;
             edgesDS.current = null;
         };
-    }, [fitView, focusNodeById, highlightTopicNode]);
+    }, [fitView, focusNodeById, highlightTopicNode, getZoomLimits, nudgeGraphIntoView]);
 
     // Оновлення даних / перемикання scope
     useEffect(() => {
@@ -411,11 +559,16 @@ export default function Graph({
             buildViewGraphOptions(
                 theme,
                 'view',
-                payload?.nodes.length ?? 0,
+                payload
+                    ? visibleNodeCount(payload, viewScope, selectedGroupId)
+                    : 0,
                 viewScope === 'groups',
             ),
         );
-    }, [theme, viewScope, payload?.nodes.length]);
+        if (viewScope === 'topics') {
+            patchTopicStyles();
+        }
+    }, [theme, viewScope, selectedGroupId, payload, patchTopicStyles]);
 
     useEffect(() => {
         const el = shellRef.current;

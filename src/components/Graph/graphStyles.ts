@@ -27,25 +27,14 @@ export function buildViewGraphOptions(
     const isDark = theme === 'dark';
     const fontColor = isDark ? '#e2e8f0' : '#1e293b';
     const edgeColor = isDark ? 'rgba(129, 140, 248, 0.55)' : 'rgba(79, 70, 229, 0.4)';
-    const isLarge = nodeCount > 80;
+    const isDenseTopics = !superMode && nodeCount > 80;
 
-    const scaling =
-        isLarge && !superMode
-            ? {
-                  min: 6,
-                  max: 14,
-                  label: {
-                      enabled: true,
-                      min: 0,
-                      max: 10,
-                      maxVisible: 16,
-                      drawThreshold: 3,
-                  },
-              }
-            : {
-                  min: superMode ? 24 : 16,
-                  max: superMode ? 44 : 30,
-              };
+    const scaling = superMode
+        ? { min: 24, max: 44 }
+        : {
+              min: isDenseTopics ? 10 : 14,
+              max: isDenseTopics ? 22 : 28,
+          };
 
     return {
         layout: superMode
@@ -53,9 +42,9 @@ export function buildViewGraphOptions(
             : { hierarchical: { enabled: false } },
         nodes: {
             shape: superMode ? 'box' : 'dot',
-            size: superMode ? 32 : isLarge ? 10 : 22,
-            borderWidth: superMode ? 2 : isLarge ? 1.5 : 3,
-            shadow: superMode || isLarge
+            size: superMode ? 32 : isDenseTopics ? 10 : 14,
+            borderWidth: superMode ? 2 : isDenseTopics ? 1.5 : 2,
+            shadow: superMode || isDenseTopics
                 ? false
                 : {
                       enabled: true,
@@ -65,24 +54,25 @@ export function buildViewGraphOptions(
                       y: 3,
                   },
             font: {
-                size: superMode ? 14 : isLarge ? 0 : 13,
+                size: superMode ? 14 : 12,
                 color: superMode ? '#f8fafc' : fontColor,
                 face: 'DM Sans, system-ui, sans-serif',
-                strokeWidth: 0,
+                strokeWidth: superMode ? 0 : 2,
+                strokeColor: isDark ? '#0f172a' : '#f8fafc',
             },
             scaling,
             margin: 10 as never,
         },
         edges: {
-            width: isLarge ? 1 : 2,
-            smooth: { enabled: true, type: 'cubicBezier', roundness: isLarge ? 0.2 : 0.35 },
+            width: isDenseTopics ? 1 : 2,
+            smooth: { enabled: true, type: 'cubicBezier', roundness: isDenseTopics ? 0.2 : 0.35 },
             color: {
                 color: edgeColor,
                 highlight: isDark ? '#a5b4fc' : '#6366f1',
                 hover: isDark ? '#c7d2fe' : '#818cf8',
-                opacity: isLarge ? 0.45 : 0.85,
+                opacity: isDenseTopics ? 0.45 : 0.85,
             },
-            arrows: { to: { enabled: true, scaleFactor: isLarge ? 0.45 : 0.7, type: 'arrow' } },
+            arrows: { to: { enabled: true, scaleFactor: isDenseTopics ? 0.45 : 0.7, type: 'arrow' } },
             shadow: false,
         },
         physics: { enabled: false },
@@ -91,7 +81,7 @@ export function buildViewGraphOptions(
             dragNodes: mode === 'edit',
             dragView: true,
             zoomView: true,
-            selectable: false,
+            selectable: superMode,
             selectConnectedEdges: false,
             multiselect: false,
             navigationButtons: false,
