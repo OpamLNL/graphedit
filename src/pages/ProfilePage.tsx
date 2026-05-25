@@ -1,0 +1,290 @@
+import { useEffect, useState } from 'react';
+import { Link, Navigate } from 'react-router-dom';
+import { usersApi, type CabinetData } from '../api/users';
+import { useAuth } from '../context/AuthContext';
+import { loadStoredNavigation, navigationStorageKey } from '../utils/graphNavigationStorage';
+
+const ROLE_LABELS: Record<string, string> = {
+    admin: 'Адміністратор',
+    teacher: 'Викладач',
+    student: 'Студент',
+    guest: 'Гість',
+};
+
+function formatDate(value: string | null | undefined): string {
+    if (!value) return '—';
+    return new Date(value).toLocaleDateString('uk-UA', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+    });
+}
+
+function formatDateTime(value: string | null | undefined): string {
+    if (!value) return '—';
+    return new Date(value).toLocaleString('uk-UA', {
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+}
+
+export default function ProfilePage() {
+    const { user, role, loading: authLoading } = useAuth();
+    const [cabinet, setCabinet] = useState<CabinetData | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    const isEditor = role === 'admin' || role === 'teacher';
+    const avatarUrl = user?.photoURL ?? cabinet?.user.avatarUrl ?? null;
+    const displayName = cabinet?.user.name ?? user?.displayName ?? 'Користувач';
+
+    useEffect(() => {
+        if (!user) {
+            setLoading(false);
+            return;
+        }
+        usersApi
+            .getCabinet()
+            .then(setCabinet)
+            .catch((e) => setError(e.message ?? 'Помилка завантаження'))
+            .finally(() => setLoading(false));
+    }, [user]);
+
+    if (authLoading || loading) {
+        return <div className="p-8 text-center opacity-60">Завантаження...</div>;
+    }
+
+    if (!user) {
+        return <Navigate to="/login" replace />;
+    }
+
+    if (error) {
+        return (
+            <div className="max-w-lg mx-auto p-8 text-center">
+                <p className="text-error mb-4">{error}</p>
+                <button className="btn btn-primary btn-sm" onClick={() => window.location.reload()}>
+                    Спробувати знову
+                </button>
+            </div>
+        );
+    }
+
+    if (!cabinet) return null;
+
+    const { stats, maps, recentCompleted } = cabinet;
+    const profileRole = cabinet.user.role ?? role ?? 'student';
+
+    return (
+        <div className="max-w-5xl mx-auto px-4 py-10">
+            <section className="glass-card p-6 md:p-8 mb-8">
+                <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6">
+                    <div className="avatar shrink-0">
+                        <div className="w-24 h-24 rounded-full ring-4 ring-primary/25 overflow-hidden bg-base-200">
+                            {avatarUrl ? (
+                                <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+                            ) : (
+                                <div className="w-full h-full flex items-center justify-center text-3xl font-display font-bold text-primary">
+                                    {displayName.charAt(0).toUpperCase()}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="flex-1 text-center sm:text-left min-w-0">
+                        <h1 className="font-display text-2xl md:text-3xl font-bold mb-1 truncate">
+                            {displayName}
+                        </h1>
+                        <p className="text-sm opacity-60 mb-3 truncate">{cabinet.user.email}</p>
+                        <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                            <span className="badge badge-primary badge-outline">
+                                {ROLE_LABELS[profileRole] ?? profileRole}
+                            </span>
+                            <span className="text-xs opacity-45">
+                                У системі з {formatDate(cabinet.user.createdAt)}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2 w-full sm:w-auto">
+                        <Link to="/maps" className="btn btn-primary btn-sm">
+                            {isEditor ? 'Мої карти' : 'До карт знань'}
+                        </Link>
+                        {isEditor && (
+                            <Link to="/maps" className="btn btn-outline btn-sm">
+                                + Нова карта
+                            </Link>
+                        )}
+                    </div>
+                </div>
+            </section>
+
+            <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                {[
+                    {
+                        label: 'Вивчено тем',
+                        value: stats.totalCompletedTopics,
+                        color: 'text-success',
+                    },
+                    {
+                        label: 'Середній прогрес',
+                        value: `${stats.averagePercent}%`,
+                        color: 'text-primary',
+                    },
+                    {
+                        label: 'Карт доступно',
+                        value: stats.mapsTotal,
+                        color: '',
+                    },
+                    {
+                        label: 'З прогресом',
+                        value: stats.mapsWithProgress,
+                        color: 'opacity-80',
+                    },
+                ].map((s) => (
+                    <div key={s.label} className="glass-card p-4 text-center">
+                        <div className={`text-2xl md:text-3xl font-bold ${s.color}`}>{s.value}</div>
+                        <div className="text-xs opacity-55 mt-1">{s.label}</div>
+                    </div>
+                ))}
+            </section>
+
+            <section className="mb-8">
+                <div className="flex items-center justify-between gap-4 mb-4">
+                    <h2 className="font-display text-xl font-bold">
+                        {isEditor ? 'Мої карти знань' : 'Прогрес по картах'}
+                    </h2>
+                    <Link to="/maps" className="text-sm text-primary hover:underline">
+                        Усі карти →
+                    </Link>
+                </div>
+
+                {maps.length === 0 ? (
+                    <div className="glass-card p-10 text-center opacity-60">
+                        {isEditor
+                            ? 'Ще немає створених карт. Створіть першу на сторінці «Карти».'
+                            : 'Немає доступних опублікованих карт.'}
+                    </div>
+                ) : (
+                    <div className="grid sm:grid-cols-2 gap-4">
+                        {maps.map((map) => (
+                            <MapProgressCard
+                                key={map.id}
+                                map={map}
+                                isEditor={isEditor}
+                                isOwner={map.ownerUid === user.uid}
+                            />
+                        ))}
+                    </div>
+                )}
+            </section>
+
+            {recentCompleted.length > 0 && (
+                <section>
+                    <h2 className="font-display text-xl font-bold mb-4">Остання активність</h2>
+                    <ul className="glass-card divide-y divide-base-content/5 overflow-hidden">
+                        {recentCompleted.map((item) => (
+                            <li
+                                key={`${item.topicId}-${item.completedAt}`}
+                                className="flex items-center gap-3 px-4 py-3 hover:bg-base-200/30 transition-colors"
+                            >
+                                <span className="text-lg shrink-0">✅</span>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium truncate">{item.title}</p>
+                                    <p className="text-xs opacity-45">
+                                        {formatDateTime(item.completedAt)}
+                                    </p>
+                                </div>
+                                {item.mapId != null && (
+                                    <Link
+                                        to={`/map/${item.mapId}`}
+                                        className="btn btn-ghost btn-xs shrink-0"
+                                    >
+                                        До карти
+                                    </Link>
+                                )}
+                            </li>
+                        ))}
+                    </ul>
+                </section>
+            )}
+        </div>
+    );
+}
+
+function MapProgressCard({
+    map,
+    isEditor,
+    isOwner,
+}: {
+    map: CabinetData['maps'][number];
+    isEditor: boolean;
+    isOwner: boolean;
+}) {
+    const hasStoredNav = !!loadStoredNavigation(navigationStorageKey(map.id, 'view'));
+    const updated = formatDate(map.updatedAt);
+    const canView = map.status === 'published' || isEditor;
+    const canEdit = isEditor && isOwner;
+
+    return (
+        <div className="glass-card p-5 flex flex-col gap-3">
+            <div className="flex items-start justify-between gap-2">
+                <h3 className="font-display font-bold text-base leading-snug">{map.title}</h3>
+                <span
+                    className={`badge badge-sm shrink-0 ${
+                        map.status === 'published' ? 'badge-success' : 'badge-warning'
+                    }`}
+                >
+                    {map.status === 'published' ? 'опубліковано' : 'чернетка'}
+                </span>
+            </div>
+
+            {map.description && (
+                <p className="text-xs opacity-55 line-clamp-2">{map.description}</p>
+            )}
+
+            {map.progress ? (
+                <div>
+                    <div className="flex justify-between text-xs mb-1.5">
+                        <span className="opacity-60">
+                            {map.progress.completed} / {map.progress.total} тем
+                        </span>
+                        <span className="font-semibold text-primary">{map.progress.percent}%</span>
+                    </div>
+                    <progress
+                        className="progress progress-primary w-full h-2"
+                        value={map.progress.percent}
+                        max={100}
+                    />
+                    <div className="flex gap-3 mt-2 text-[10px] opacity-45">
+                        <span>✅ {map.progress.completed}</span>
+                        <span>🔓 {map.progress.available}</span>
+                        <span>🔒 {map.progress.locked}</span>
+                    </div>
+                </div>
+            ) : (
+                <p className="text-xs opacity-45">
+                    {map.status === 'draft'
+                        ? 'Чернетка — опублікуйте для студентів'
+                        : 'Немає вузлів для відстеження прогресу'}
+                </p>
+            )}
+
+            <p className="text-[10px] opacity-35">Оновлено {updated}</p>
+
+            <div className="flex flex-wrap gap-2 mt-auto pt-1">
+                {canView && (
+                    <Link to={`/map/${map.id}`} className="btn btn-outline btn-sm flex-1">
+                        {hasStoredNav ? 'Продовжити' : 'Переглянути'}
+                    </Link>
+                )}
+                {canEdit && (
+                    <Link to={`/editor/${map.id}`} className="btn btn-primary btn-sm flex-1">
+                        Редагувати
+                    </Link>
+                )}
+            </div>
+        </div>
+    );
+}

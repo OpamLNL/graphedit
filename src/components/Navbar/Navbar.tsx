@@ -16,7 +16,7 @@ export const navLinks: NavLink[] = [
     { path: '/', label: 'Головна' },
     { path: '/maps', label: 'Карти', authOnly: true },
     { path: '/topics', label: 'Теми' },
-    { path: '/progress', label: 'Прогрес', authOnly: true },
+    { path: '/profile', label: 'Кабінет', authOnly: true },
     { path: '/admin/adminPage', label: 'Адмін', adminOnly: true },
 ];
 
@@ -105,7 +105,7 @@ export default function Navbar() {
                                         ✏️ Мої карти
                                     </Link>
                                 )}
-                                <div className="hidden md:flex items-center gap-2 pl-1">
+                                <Link to="/profile" className="hidden md:flex items-center gap-2 pl-1 hover:opacity-90 transition-opacity">
                                     {user.photoURL && (
                                         <img src={user.photoURL} alt="" className="w-8 h-8 rounded-full ring-2 ring-primary/30" />
                                     )}
@@ -115,7 +115,7 @@ export default function Navbar() {
                                         </p>
                                         <p className="text-[10px] opacity-45 capitalize">{role}</p>
                                     </div>
-                                </div>
+                                </Link>
                                 <button className="btn btn-ghost btn-sm" onClick={handleLogout}>
                                     Вийти
                                 </button>

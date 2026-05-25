@@ -8,7 +8,7 @@ import EditorPage from './pages/EditorPage';
 import Topics from './pages/Topics';
 import About from './pages/About';
 import Contact from './pages/Contact';
-import Progress from './pages/Progress';
+import ProfilePage from './pages/ProfilePage';
 import Login from './pages/Login';
 import AdminPage from './pages/admin/AdminPage.tsx';
 
@@ -27,7 +27,8 @@ function App() {
                     <Route path="/topics" element={<Topics />} />
                     <Route path="/about" element={<About />} />
                     <Route path="/contact" element={<Contact />} />
-                    <Route path="/progress" element={<Progress />} />
+                    <Route path="/profile" element={<ProfilePage />} />
+                    <Route path="/progress" element={<Navigate to="/profile" replace />} />
                     <Route path="/login" element={<Login />} />
                     <Route path="/admin/adminPage" element={<AdminPage />} />
                 </Routes>
