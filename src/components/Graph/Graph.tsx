@@ -1,19 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Network, DataSet } from 'vis-network/standalone';
 import { useTheme } from '../../context/ThemeContext';
 import { buildViewGraphOptions } from './graphStyles';
 import GraphMapHUD from './GraphMapHUD';
 import { buildFocusMoveTo } from '../../utils/graphViewport';
-import { layoutNodesByLevel } from '../../utils/levelLayout';
 import {
-    buildLevelSuperGraph,
-    isSuperNodeId,
-    levelFromSuperId,
-    patchActiveNodeHighlight,
-    resolveZoomMode,
-    styledDetailNodes,
-    type ZoomDisplayMode,
-} from '../../utils/semanticZoom';
+    buildGroupSuperGraph,
+    filterGraphByGroup,
+    groupIdFromNodeId,
+    isGroupNodeId,
+    layoutTopicsInGroup,
+    patchTopicHighlight,
+    styledTopicNodes,
+} from '../../utils/groupGraph';
 
 export interface NodeData {
     id: number;
@@ -23,6 +22,9 @@ export interface NodeData {
     x: number | null;
     y: number | null;
     level: number;
+    groupId: string | null;
+    orderInGroup?: number;
+    globalOrder?: number | null;
     progress: number;
     status: 'completed' | 'available' | 'locked';
 }
@@ -32,91 +34,87 @@ export interface EdgeData {
     to: number;
 }
 
-interface GraphProps {
+export interface GroupData {
+    id: string;
+    title: string;
+    description: string | null;
+    level: number;
+    sortOrder: number;
+    topicCount: number;
+    completedCount: number;
+    availableCount: number;
+    progressPercent: number;
+}
+
+export interface GroupEdgeData {
+    from: string;
+    to: string;
+    type: string;
+}
+
+export type GraphViewScope = 'groups' | 'topics';
+
+export interface GraphPayload {
     nodes: NodeData[];
     edges: EdgeData[];
-    onNodeClick?: (nodeId: number) => void;
+    groups: GroupData[];
+    groupEdges: GroupEdgeData[];
+}
+
+interface GraphProps {
+    payload: GraphPayload | null;
+    viewScope: GraphViewScope;
+    selectedGroupId: string | null;
     activeNodeId?: number | null;
     activeNodeTitle?: string | null;
-    selectedLevel?: number | null;
-    levelRange?: number[];
-    mode?: 'view' | 'edit';
-    semanticZoom?: boolean;
-    onZoomModeChange?: (mode: ZoomDisplayMode) => void;
-    onLevelFocus?: (level: number) => void;
+    onGroupSelect?: (groupId: string) => void;
+    onNodeClick?: (nodeId: number) => void;
+    onBackToGroups?: () => void;
 }
 
 export default function Graph({
-                                  nodes,
-                                  edges,
-                                  onNodeClick,
-                                  activeNodeId,
-                                  activeNodeTitle = null,
-                                  selectedLevel = null,
-                                  levelRange = [],
-                                  mode = 'view',
-                                  semanticZoom = false,
-                                  onZoomModeChange,
-                                  onLevelFocus,
-                              }: GraphProps) {
+    payload,
+    viewScope,
+    selectedGroupId,
+    activeNodeId = null,
+    activeNodeTitle = null,
+    onGroupSelect,
+    onNodeClick,
+    onBackToGroups,
+}: GraphProps) {
     const shellRef = useRef<HTMLDivElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
     const networkRef = useRef<Network | null>(null);
     const nodesDS = useRef<DataSet<{ id: number | string }> | null>(null);
     const edgesDS = useRef<DataSet<{ from: number | string; to: number | string }> | null>(null);
 
-    const zoomModeRef = useRef<ZoomDisplayMode>('detail');
-    const zoomTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const payloadRef = useRef(payload);
+    const viewScopeRef = useRef(viewScope);
+    const selectedGroupIdRef = useRef(selectedGroupId);
+    const topicLayoutRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+    const prevActiveNodeIdRef = useRef<number | null>(null);
+    const activeNodeIdRef = useRef(activeNodeId);
     const programmaticMoveRef = useRef(false);
 
-    const sourceRef = useRef({ nodes, edges });
-    const { theme } = useTheme();
-
-    const themeRef = useRef(theme);
-    const modeRef = useRef(mode);
-    const semanticZoomRef = useRef(semanticZoom);
+    const onGroupSelectRef = useRef(onGroupSelect);
     const onNodeClickRef = useRef(onNodeClick);
-    const onLevelFocusRef = useRef(onLevelFocus);
-    const onZoomModeChangeRef = useRef(onZoomModeChange);
-    const activeNodeIdRef = useRef<number | null>(activeNodeId ?? null);
-    const prevActiveNodeIdRef = useRef<number | null>(null);
+    const onBackToGroupsRef = useRef(onBackToGroups);
 
-    const isLarge = nodes.length > 80;
+    const { theme } = useTheme();
+    const themeRef = useRef(theme);
 
+    payloadRef.current = payload;
+    viewScopeRef.current = viewScope;
+    selectedGroupIdRef.current = selectedGroupId;
     activeNodeIdRef.current = activeNodeId ?? null;
-    sourceRef.current = { nodes, edges };
     themeRef.current = theme;
-    modeRef.current = mode;
-    semanticZoomRef.current = semanticZoom;
+    onGroupSelectRef.current = onGroupSelect;
     onNodeClickRef.current = onNodeClick;
-    onLevelFocusRef.current = onLevelFocus;
-    onZoomModeChangeRef.current = onZoomModeChange;
-
-    const layoutPositions = useMemo(
-        () =>
-            layoutNodesByLevel(nodes, {
-                levelSeparation: isLarge ? 160 : 200,
-                nodeSpacing: isLarge ? 44 : 52,
-                normalizeColumns: true,
-            }),
-        [nodes, isLarge],
-    );
-
-    const layoutPositionsRef = useRef(layoutPositions);
-    layoutPositionsRef.current = layoutPositions;
-
-    const resolvedLevelRange = useMemo(
-        () =>
-            levelRange.length > 0
-                ? levelRange
-                : [...new Set(nodes.map((n) => n.level))].sort((a, b) => a - b),
-        [levelRange, nodes],
-    );
+    onBackToGroupsRef.current = onBackToGroups;
 
     const runProgrammaticMove = useCallback((callback: () => void, duration = 450) => {
         programmaticMoveRef.current = true;
         callback();
-
         window.setTimeout(() => {
             programmaticMoveRef.current = false;
         }, duration);
@@ -125,22 +123,14 @@ export default function Graph({
     const fitView = useCallback(
         (animate = true) => {
             const network = networkRef.current;
-            if (!network || !nodesDS.current) return;
+            const nodes = nodesDS.current;
+            if (!network || !nodes || nodes.length === 0) return;
 
-            const ids = nodesDS.current.getIds();
-
+            const ids = [...nodes.getIds()];
             runProgrammaticMove(() => {
-                if (ids.length === 0) {
-                    network.fit({
-                        animation: animate
-                            ? { duration: 400, easingFunction: 'easeInOutQuad' }
-                            : false,
-                    });
-                    return;
-                }
-
                 network.fit({
-                    nodes: ids,
+                    ...(ids.length > 0 ? { nodes: ids } : {}),
+                    padding: 56,
                     animation: animate
                         ? { duration: 400, easingFunction: 'easeInOutQuad' }
                         : false,
@@ -154,16 +144,12 @@ export default function Graph({
         (factor: number) => {
             const network = networkRef.current;
             if (!network) return;
-
-            runProgrammaticMove(
-                () => {
-                    network.moveTo({
-                        scale: Math.min(3, Math.max(0.1, network.getScale() * factor)),
-                        animation: { duration: 180, easingFunction: 'easeInOutQuad' },
-                    });
-                },
-                220,
-            );
+            runProgrammaticMove(() => {
+                network.moveTo({
+                    scale: Math.min(3, Math.max(0.08, network.getScale() * factor)),
+                    animation: { duration: 180, easingFunction: 'easeInOutQuad' },
+                });
+            }, 220);
         },
         [runProgrammaticMove],
     );
@@ -173,128 +159,77 @@ export default function Graph({
             const network = networkRef.current;
             if (!network || !nodesDS.current?.get(id)) return;
 
-            const pos = layoutPositionsRef.current.get(id);
+            const pos = topicLayoutRef.current.get(id);
             if (!pos) return;
 
             network.selectNodes([id]);
-
             const moveOpts = buildFocusMoveTo(
                 pos,
                 preserveScale ? network.getScale() : undefined,
             );
 
-            runProgrammaticMove(() => {
-                network.moveTo(moveOpts);
-            });
+            runProgrammaticMove(() => network.moveTo(moveOpts));
         },
         [runProgrammaticMove],
     );
 
-    const applyDisplay = useCallback(
-        (network: Network, display: ZoomDisplayMode, animate = true) => {
-            const { nodes: srcNodes, edges: srcEdges } = sourceRef.current;
-            const large = srcNodes.length > 80;
-            const isSuper = display === 'super' && semanticZoomRef.current && large;
+    const applyView = useCallback(
+        (scope: GraphViewScope, groupId: string | null, animate = true) => {
+            const network = networkRef.current;
+            const data = payloadRef.current;
+            if (!network || !data || !nodesDS.current || !edgesDS.current) return;
 
-            if (!nodesDS.current || !edgesDS.current) return;
+            const isGroupView = scope === 'groups';
 
             network.setOptions(
-                buildViewGraphOptions(themeRef.current, modeRef.current, srcNodes.length, isSuper),
+                buildViewGraphOptions(themeRef.current, 'view', data.nodes.length, isGroupView),
             );
 
             nodesDS.current.clear();
             edgesDS.current.clear();
 
-            if (isSuper) {
-                const { nodes: superNodes, edges: superEdges } = buildLevelSuperGraph(
-                    srcNodes,
-                    srcEdges,
+            if (isGroupView) {
+                const { nodes, edges } = buildGroupSuperGraph(data.groups, data.groupEdges);
+                nodesDS.current.add(nodes);
+                edgesDS.current.add(edges);
+                topicLayoutRef.current = new Map();
+            } else if (groupId) {
+                const { nodes, edges } = filterGraphByGroup(data.nodes, data.edges, groupId);
+                const layout = layoutTopicsInGroup(nodes);
+                topicLayoutRef.current = layout;
+                nodesDS.current.add(
+                    styledTopicNodes(nodes, layout, activeNodeIdRef.current),
                 );
-
-                nodesDS.current.add(superNodes);
-                edgesDS.current.add(superEdges);
-            } else {
-                nodesDS.current.add(styledDetailNodes(srcNodes, large, activeNodeIdRef.current));
-                edgesDS.current.add(srcEdges);
+                edgesDS.current.add(edges);
             }
 
-            zoomModeRef.current = display;
-            onZoomModeChangeRef.current?.(display);
-
-            if (animate && display === 'super') {
-                fitView();
+            if (animate && nodesDS.current.length > 0) {
+                requestAnimationFrame(() => fitView());
             }
         },
         [fitView],
     );
 
-    const focusActiveNode = useCallback(
-        (preserveScale = false) => {
-            const id = activeNodeIdRef.current;
-
-            if (id == null) {
-                fitView();
-                return;
-            }
-
-            if (zoomModeRef.current === 'super') {
-                const network = networkRef.current;
-                if (!network) return;
-
-                applyDisplay(network, 'detail', false);
-                requestAnimationFrame(() => focusNodeById(id, preserveScale));
-                return;
-            }
-
-            focusNodeById(id, preserveScale);
-        },
-        [applyDisplay, fitView, focusNodeById],
-    );
-
+    // Ініціалізація vis-network один раз (без remount при зміні payload)
     useEffect(() => {
-        if (!containerRef.current) return;
+        if (!containerRef.current || networkRef.current) return;
 
-        const startSuper = semanticZoom && isLarge;
-        const superGraph = startSuper ? buildLevelSuperGraph(nodes, edges) : null;
-
-        const initialNodes = startSuper
-            ? superGraph!.nodes
-            : styledDetailNodes(nodes, isLarge, activeNodeIdRef.current);
-
-        const initialEdges = startSuper ? superGraph!.edges : edges;
-
-        nodesDS.current = new DataSet(initialNodes);
-        edgesDS.current = new DataSet(initialEdges);
-        zoomModeRef.current = startSuper ? 'super' : 'detail';
-
-        if (networkRef.current) {
-            networkRef.current.destroy();
-            networkRef.current = null;
-        }
+        nodesDS.current = new DataSet([]);
+        edgesDS.current = new DataSet([]);
 
         const network = new Network(
             containerRef.current,
             { nodes: nodesDS.current, edges: edgesDS.current },
-            buildViewGraphOptions(theme, mode, nodes.length, startSuper),
+            buildViewGraphOptions(themeRef.current, 'view', 500, true),
         );
-
         networkRef.current = network;
-        onZoomModeChangeRef.current?.(zoomModeRef.current);
 
         network.on('click', (params) => {
             if (params.nodes.length === 0) return;
-
             const clickedId = params.nodes[0];
 
-            if (isSuperNodeId(clickedId)) {
-                const level = levelFromSuperId(String(clickedId));
-
-                onLevelFocusRef.current?.(level);
-                applyDisplay(network, 'detail', false);
-
-                const first = sourceRef.current.nodes.find((n) => n.level === level);
-                if (first) requestAnimationFrame(() => focusNodeById(first.id, false));
-
+            if (isGroupNodeId(clickedId)) {
+                onGroupSelectRef.current?.(groupIdFromNodeId(String(clickedId)));
                 return;
             }
 
@@ -305,109 +240,103 @@ export default function Graph({
             }
         });
 
-        network.on('zoom', () => {
-            if (programmaticMoveRef.current) return;
-            if (!semanticZoomRef.current || sourceRef.current.nodes.length <= 80) return;
-
-            if (zoomTimerRef.current) clearTimeout(zoomTimerRef.current);
-
-            zoomTimerRef.current = setTimeout(() => {
-                if (programmaticMoveRef.current) return;
-
-                const scale = network.getScale();
-                const next = resolveZoomMode(scale, zoomModeRef.current);
-
-                if (next !== zoomModeRef.current) {
-                    applyDisplay(network, next, false);
-                }
-            }, 120);
-        });
-
         window.__focusGraphNode = (id: number) => {
             activeNodeIdRef.current = id;
-
-            if (zoomModeRef.current === 'super') {
-                applyDisplay(network, 'detail', false);
-                requestAnimationFrame(() => focusNodeById(id, false));
-            } else {
-                focusNodeById(id, false);
-            }
+            focusNodeById(id, false);
         };
-
         window.__fitGraphView = () => fitView();
 
-        network.once('afterDrawing', () => {
-            if (activeNodeIdRef.current != null && nodesDS.current?.get(activeNodeIdRef.current)) {
-                focusNodeById(activeNodeIdRef.current, false);
-            } else {
-                fitView(false);
-            }
-        });
-
         return () => {
-            if (zoomTimerRef.current) clearTimeout(zoomTimerRef.current);
-
             window.__focusGraphNode = undefined;
             window.__fitGraphView = undefined;
-
             network.destroy();
             networkRef.current = null;
             nodesDS.current = null;
             edgesDS.current = null;
         };
-    }, [
-        nodes,
-        edges,
-        theme,
-        mode,
-        semanticZoom,
-        isLarge,
-        applyDisplay,
-        focusNodeById,
-        fitView,
-    ]);
+    }, [fitView, focusNodeById]);
 
+    // Перше завантаження даних
     useEffect(() => {
-        if (activeNodeId == null) return;
-        if (!sourceRef.current.nodes.some((n) => n.id === activeNodeId)) return;
+        if (!networkRef.current || !payload) return;
+        applyView(viewScopeRef.current, selectedGroupIdRef.current, false);
+    }, [payload, applyView]);
 
-        if (networkRef.current && zoomModeRef.current === 'detail' && nodesDS.current) {
-            patchActiveNodeHighlight(
+    // Перемикання групи / scope — лише оновлення DataSet
+    useEffect(() => {
+        if (!networkRef.current || !payload) return;
+        applyView(viewScope, selectedGroupId);
+
+        if (
+            viewScope === 'topics' &&
+            activeNodeIdRef.current != null &&
+            selectedGroupId &&
+            payload.nodes.some(
+                (n) => n.id === activeNodeIdRef.current && n.groupId === selectedGroupId,
+            )
+        ) {
+            requestAnimationFrame(() => focusNodeById(activeNodeIdRef.current!, false));
+        }
+    }, [viewScope, selectedGroupId, payload, applyView, focusNodeById]);
+
+    // Підсвітка обраної теми
+    useEffect(() => {
+        if (viewScope !== 'topics' || !nodesDS.current || !payload) return;
+
+        const visibleNodes = selectedGroupId
+            ? payload.nodes.filter((n) => n.groupId === selectedGroupId)
+            : [];
+
+        if (activeNodeId != null) {
+            patchTopicHighlight(
                 nodesDS.current,
-                sourceRef.current.nodes,
+                visibleNodes,
                 activeNodeId,
                 prevActiveNodeIdRef.current,
-                isLarge,
             );
-
             prevActiveNodeIdRef.current = activeNodeId;
+            focusNodeById(activeNodeId, false);
         }
+    }, [activeNodeId, viewScope, selectedGroupId, payload, focusNodeById]);
 
-        focusActiveNode(false);
-    }, [activeNodeId, focusActiveNode, isLarge]);
+    useEffect(() => {
+        if (!networkRef.current) return;
+        networkRef.current.setOptions(
+            buildViewGraphOptions(
+                theme,
+                'view',
+                payload?.nodes.length ?? 0,
+                viewScope === 'groups',
+            ),
+        );
+    }, [theme, viewScope, payload?.nodes.length]);
 
     useEffect(() => {
         const el = shellRef.current;
         if (!el) return;
-
         const ro = new ResizeObserver(() => networkRef.current?.redraw());
         ro.observe(el);
-
         return () => ro.disconnect();
     }, []);
+
+    const selectedGroup = payload?.groups.find((g) => g.id === selectedGroupId) ?? null;
 
     return (
         <div ref={shellRef} className="absolute inset-0 graph-map-shell overflow-hidden rounded-lg">
             <div ref={containerRef} className="absolute inset-0 z-0" />
-
             <GraphMapHUD
-                selectedLevel={selectedLevel}
-                levelRange={resolvedLevelRange}
+                viewScope={viewScope}
+                groupTitle={selectedGroup?.title ?? null}
                 activeNodeTitle={activeNodeTitle}
                 onFit={() => fitView()}
-                onRecenter={() => focusActiveNode(true)}
+                onRecenter={() => {
+                    const id = activeNodeIdRef.current;
+                    if (id != null) focusNodeById(id, true);
+                    else fitView();
+                }}
                 onZoomIn={() => zoomBy(1.2)}
                 onZoomOut={() => zoomBy(1 / 1.2)}
+                onBackToGroups={viewScope === 'topics' ? onBackToGroups : undefined}
             />
         </div>
     );

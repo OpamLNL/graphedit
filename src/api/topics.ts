@@ -4,6 +4,9 @@ export interface Topic {
     id: number;
     title: string;
     description: string;
+    groupId?: string | null;
+    orderInGroup?: number;
+    globalOrder?: number | null;
 }
 
 export const topicsApi = {
