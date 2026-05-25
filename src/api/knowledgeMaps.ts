@@ -54,8 +54,15 @@ export interface BulkSavePayload {
         toNodeId: number;
         type?: string | null;
     }[];
+    groupEdges?: {
+        id?: number;
+        fromGroupId: string;
+        toGroupId: string;
+        type?: string | null;
+    }[];
     deletedNodeIds?: number[];
     deletedEdgeIds?: number[];
+    deletedGroupEdgeIds?: number[];
     createRevision?: boolean;
     revisionComment?: string;
 }

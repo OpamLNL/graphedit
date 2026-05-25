@@ -8,7 +8,9 @@ export default function KnowledgeNode({ data, selected }: NodeProps) {
 
     return (
         <div
-            className={`knowledge-node ${selected ? 'knowledge-node--selected' : ''}`}
+            className={`knowledge-node ${selected ? 'knowledge-node--selected' : ''} ${
+                d.isConnectSource ? 'knowledge-node--connect-source' : ''
+            }`}
             style={{ '--node-accent': accent } as CSSProperties}
         >
             <Handle type="target" position={Position.Left} className="knowledge-handle" />

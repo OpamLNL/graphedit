@@ -20,7 +20,7 @@ import {
 export default function MapPage() {
     const { mapId: mapIdParam } = useParams<{ mapId: string }>();
     const mapId = Number(mapIdParam);
-    const { user, loading: authLoading } = useAuth();
+    const { user, loading: authLoading, role } = useAuth();
 
     const [mapMeta, setMapMeta] = useState<KnowledgeMap | null>(null);
     const [graphPayload, setGraphPayload] = useState<GraphPayload | null>(null);
@@ -166,6 +166,11 @@ export default function MapPage() {
                     <span className="badge badge-ghost badge-xs opacity-60">
                         {groups.length} груп · {nodes.length} тем
                     </span>
+                    {(role === 'admin' || role === 'teacher') && (
+                        <Link to={`/editor/${mapId}`} className="btn btn-outline btn-xs ml-auto">
+                            Редагувати
+                        </Link>
+                    )}
 
                     <div className="flex items-center gap-1 text-xs opacity-70 ml-2">
                         <button

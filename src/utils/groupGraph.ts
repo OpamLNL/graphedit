@@ -1,4 +1,5 @@
 import type { NodeData, EdgeData, GroupData, GroupEdgeData } from '../components/Graph/Graph';
+import { layoutGroupGraphByEdges, layoutTopicGraphByEdges } from './graphLayout';
 
 function humanizeGroupId(id: string): string {
     return id
@@ -77,7 +78,6 @@ export function groupIdFromNodeId(id: string): string {
     return id.slice(GROUP_NODE_PREFIX.length);
 }
 
-const TOPIC_SPACING = 56;
 const TOPIC_LABEL_MAX = 52;
 
 function truncateTopicLabel(label: string, max = TOPIC_LABEL_MAX): string {
@@ -98,72 +98,70 @@ function topicLabelFont(isDark: boolean) {
     };
 }
 
-/** Теми однієї групи — вертикальна колонка за orderInGroup */
-export function layoutTopicsInGroup(nodes: NodeData[]): Map<number, { x: number; y: number }> {
-    const sorted = [...nodes].sort((a, b) => (a.orderInGroup ?? 0) - (b.orderInGroup ?? 0));
-    const span = Math.max(0, (sorted.length - 1) * TOPIC_SPACING);
-    const positions = new Map<number, { x: number; y: number }>();
+/** Теми однієї групи — ієрархія зверху вниз за ребрами (ступінь від початкового) */
+export function layoutTopicsInGroup(
+    nodes: NodeData[],
+    edges: EdgeData[] = [],
+): Map<number, { x: number; y: number }> {
+    if (nodes.length === 0) return new Map();
 
-    sorted.forEach((node, index) => {
-        positions.set(node.id, {
-            x: 0,
-            y: index * TOPIC_SPACING - span / 2,
-        });
-    });
-
-    return positions;
+    const nodeIds = nodes.map((n) => n.id);
+    const graphEdges = edges.map((e) => ({ from: e.from, to: e.to }));
+    const sortKeys = new Map<number, number>(
+        nodes.map((n) => [n.id, n.orderInGroup ?? n.globalOrder ?? 0]),
+    );
+    return layoutTopicGraphByEdges(nodeIds, graphEdges, sortKeys);
 }
 
-/** Групи — зверху вниз за level; кілька груп на одному рівні — в ряд */
-export function layoutGroups(groups: GroupData[]): Map<string, { x: number; y: number }> {
-    const levelStep = 132;
-    const rowStep = 228;
+/** Гroups — той самий алгоритм: ступінь від початкової групи, зверху вниз */
+export function layoutGroups(
+    groups: GroupData[],
+    groupEdges: GroupEdgeData[] = [],
+): Map<string, { x: number; y: number }> {
+    if (groups.length === 0) return new Map();
 
-    const sortedLevels = [...new Set(groups.map((g) => g.level))].sort((a, b) => a - b);
+    const groupIds = groups.map((g) => g.id);
+    const edges = groupEdges.map((e) => ({ from: e.from, to: e.to }));
+    const sortKeys = new Map<string, number>(
+        groups.map((g) => [g.id, g.sortOrder ?? g.level * 1000]),
+    );
+    const positions = layoutGroupGraphByEdges(groupIds, edges, sortKeys);
 
-    const positions = new Map<string, { x: number; y: number }>();
-
-    const byLevel = new Map<number, GroupData[]>();
     for (const g of groups) {
-        if (!byLevel.has(g.level)) byLevel.set(g.level, []);
-        byLevel.get(g.level)!.push(g);
-    }
-
-    for (const level of sortedLevels) {
-        const sorted = [...(byLevel.get(level) ?? [])].sort(
-            (a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title, 'uk'),
-        );
-        const span = Math.max(0, (sorted.length - 1) * rowStep);
-        sorted.forEach((g, index) => {
-            positions.set(g.id, {
-                x: index * rowStep - span / 2,
-                y: level * levelStep,
-            });
-        });
+        if (!positions.has(g.id)) {
+            positions.set(g.id, { x: 0, y: 0 });
+        }
     }
 
     return positions;
 }
 
 const SELECTED_BORDER = '#f59e0b';
+const CONNECT_SOURCE_BORDER = '#f59e0b';
 
-function topicColor(status: NodeData['status'], isActive: boolean) {
+function topicColor(
+    status: NodeData['status'],
+    isActive: boolean,
+    isConnectSource = false,
+) {
     const background =
         status === 'completed' ? '#6366f1' : status === 'available' ? '#10b981' : '#64748b';
-    const border = isActive
-        ? SELECTED_BORDER
-        : status === 'completed'
-          ? '#818cf8'
-          : status === 'available'
-            ? '#34d399'
-            : '#94a3b8';
+    const border = isConnectSource
+        ? CONNECT_SOURCE_BORDER
+        : isActive
+          ? SELECTED_BORDER
+          : status === 'completed'
+            ? '#818cf8'
+            : status === 'available'
+              ? '#34d399'
+              : '#94a3b8';
 
     return {
         background,
         border,
         highlight: {
             background,
-            border: isActive ? SELECTED_BORDER : '#ffffff',
+            border: isConnectSource || isActive ? CONNECT_SOURCE_BORDER : '#ffffff',
         },
         opacity: status === 'locked' ? 0.55 : 1,
     };
@@ -174,26 +172,46 @@ export function styledTopicNodes(
     positions: Map<number, { x: number; y: number }>,
     activeNodeId: number | null,
     isDark = false,
+    connectSourceId: number | null = null,
+    editMode = false,
 ) {
     return nodes.map((node) => {
         const isActive = activeNodeId != null && node.id === activeNodeId;
+        const isConnectSource = connectSourceId != null && node.id === connectSourceId;
         const pos = positions.get(node.id);
         const label = truncateTopicLabel(node.label || node.title);
         return {
             id: node.id,
             label,
-            title: `${node.title}\n${statusLabel(node.status)}${isActive ? '\n★ обрано' : ''}`,
+            title: `${node.title}\n${statusLabel(node.status)}${isActive ? '\n★ обрано' : ''}${isConnectSource ? '\n→ початок ребра' : ''}`,
             x: pos?.x,
             y: pos?.y,
-            fixed: { x: true, y: true },
-            color: topicColor(node.status, isActive),
-            size: isActive ? 16 : 12,
-            borderWidth: isActive ? 3 : 1.5,
+            fixed: editMode ? false : { x: true, y: true },
+            color: topicColor(node.status, isActive, isConnectSource),
+            size: isActive || isConnectSource ? 16 : 12,
+            borderWidth: isActive || isConnectSource ? 3 : 1.5,
             font: topicLabelFont(isDark),
             margin: { top: 2, right: 6, bottom: 12, left: 6 },
             labelHighlightBold: false,
         };
     });
+}
+
+export function styledTopicEdges(edges: EdgeData[]) {
+    return edges.map((e) => ({
+        id: `${e.from}-${e.to}`,
+        from: e.from,
+        to: e.to,
+        width: 2,
+        smooth: { enabled: true, type: 'cubicBezier', roundness: 0.2 },
+        color: {
+            color: '#818cf8',
+            highlight: '#c7d2fe',
+            hover: '#a5b4fc',
+            opacity: 0.85,
+        },
+        arrows: { to: { enabled: true, scaleFactor: 0.65, type: 'arrow' } },
+    }));
 }
 
 const GROUP_TITLE_MAX = 34;
@@ -218,9 +236,36 @@ function groupStatusLine(g: GroupData): string {
     return `${g.topicCount} тем · заблоковано`;
 }
 
-function groupNodeColors(g: GroupData, isDark: boolean) {
+function groupNodeColors(
+    g: GroupData,
+    isDark: boolean,
+    isActive = false,
+    isConnectSource = false,
+) {
     const complete = g.topicCount > 0 && g.completedCount === g.topicCount;
     const available = g.availableCount > 0;
+
+    if (isConnectSource) {
+        return {
+            background: isDark ? '#c2410c' : '#ea580c',
+            border: CONNECT_SOURCE_BORDER,
+            highlight: {
+                background: isDark ? '#ea580c' : '#f97316',
+                border: '#ffffff',
+            },
+        };
+    }
+
+    if (isActive) {
+        return {
+            background: isDark ? '#4338ca' : '#6366f1',
+            border: '#ffffff',
+            highlight: {
+                background: isDark ? '#6366f1' : '#818cf8',
+                border: '#ffffff',
+            },
+        };
+    }
 
     if (complete) {
         return {
@@ -268,18 +313,32 @@ function groupLabelFont() {
 function styledGroupEdges(
     groupEdges: GroupEdgeData[],
     isDark: boolean,
-): { from: string; to: string; width: number; dashes: number[] | boolean; smooth: object; color: object; arrows: object }[] {
+    editMode = false,
+): {
+    id: string;
+    from: string;
+    to: string;
+    width: number;
+    dashes: number[] | boolean;
+    smooth: object;
+    color: object;
+    arrows: object;
+}[] {
     const base = isDark ? 'rgba(165, 180, 252, 0.72)' : 'rgba(79, 70, 229, 0.55)';
     const highlight = isDark ? '#c7d2fe' : '#6366f1';
 
     return groupEdges.map((e) => {
         const isRecommended = e.type === 'recommended_path';
         return {
+            id:
+                e.id != null && e.id > 0
+                    ? `ge-${e.id}`
+                    : `ge-${e.from}-${e.to}`,
             from: groupNodeId(e.from),
             to: groupNodeId(e.to),
-            width: isRecommended ? 1.8 : 2.4,
+            width: editMode ? (isRecommended ? 2 : 2.6) : isRecommended ? 1.8 : 2.4,
             dashes: isRecommended ? [10, 8] : false,
-            smooth: { enabled: true, type: 'cubicBezier', roundness: 0.42 },
+            smooth: { enabled: true, type: 'cubicBezier', roundness: 0.2 },
             color: {
                 color: base,
                 highlight,
@@ -295,17 +354,30 @@ export function buildGroupSuperGraph(
     groups: GroupData[],
     groupEdges: GroupEdgeData[],
     isDark = false,
+    activeGroupId: string | null = null,
+    connectSourceGroupId: string | null = null,
+    editMode = false,
 ): { nodes: object[]; edges: object[] } {
-    const positions = layoutGroups(groups);
+    const positions = layoutGroups(groups, groupEdges);
 
     const visNodes = groups.map((g) => {
         const pos = positions.get(g.id)!;
         const title = truncateGroupTitle(g.title);
+        const isActive = activeGroupId != null && g.id === activeGroupId;
+        const isConnectSource = connectSourceGroupId != null && g.id === connectSourceGroupId;
 
         return {
             id: groupNodeId(g.id),
             label: `${title}\n${groupStatusLine(g)}`,
-            title: `${g.title}\n${g.description ?? ''}\n\n${groupStatusLine(g)}\nРівень ${g.level + 1}\n\nКлік — відкрити групу`,
+            title: `${g.title}\n${g.description ?? ''}\n\n${groupStatusLine(g)}\nРівень ${g.level + 1}${
+                isConnectSource
+                    ? '\n\n→ початок ребра'
+                    : isActive
+                      ? '\n\n★ обрано'
+                      : editMode
+                        ? '\n\nКлік — обрати · «Зʼєднання ✓» — ребро'
+                        : '\n\nКлік — відкрити групу'
+            }`,
             x: pos.x,
             y: pos.y,
             fixed: { x: true, y: true },
@@ -314,8 +386,8 @@ export function buildGroupSuperGraph(
             widthConstraint: { minimum: 200, maximum: 248 },
             heightConstraint: { minimum: 80, valign: 'middle' as const },
             font: groupLabelFont(),
-            color: groupNodeColors(g, isDark),
-            borderWidth: 2,
+            color: groupNodeColors(g, isDark, isActive, isConnectSource),
+            borderWidth: isActive || isConnectSource ? 3 : 2,
             margin: { top: 10, right: 12, bottom: 10, left: 12 },
             shadow: {
                 enabled: true,
@@ -328,7 +400,69 @@ export function buildGroupSuperGraph(
         };
     });
 
-    return { nodes: visNodes, edges: styledGroupEdges(groupEdges, isDark) };
+    return {
+        nodes: visNodes,
+        edges: styledGroupEdges(groupEdges, isDark, editMode),
+    };
+}
+
+export function patchGroupHighlight(
+    nodesDS: { update: (items: object | object[]) => void },
+    groups: GroupData[],
+    activeGroupId: string | null,
+    prevActiveGroupId: string | null,
+    connectSourceGroupId: string | null,
+    isDark: boolean,
+) {
+    const updates: object[] = [];
+
+    const idsToReset = new Set<string>();
+    if (prevActiveGroupId != null && prevActiveGroupId !== activeGroupId) {
+        idsToReset.add(prevActiveGroupId);
+    }
+    if (
+        connectSourceGroupId != null &&
+        connectSourceGroupId !== activeGroupId &&
+        connectSourceGroupId !== prevActiveGroupId
+    ) {
+        /* keep connect source styled separately */
+    }
+
+    for (const id of idsToReset) {
+        const g = groups.find((group) => group.id === id);
+        if (g) {
+            updates.push({
+                id: groupNodeId(id),
+                color: groupNodeColors(g, isDark, false, false),
+                borderWidth: 2,
+            });
+        }
+    }
+
+    if (activeGroupId != null) {
+        const g = groups.find((group) => group.id === activeGroupId);
+        if (g) {
+            const isConnectSource = connectSourceGroupId === activeGroupId;
+            updates.push({
+                id: groupNodeId(activeGroupId),
+                color: groupNodeColors(g, isDark, !isConnectSource, isConnectSource),
+                borderWidth: 3,
+            });
+        }
+    }
+
+    if (connectSourceGroupId != null && connectSourceGroupId !== activeGroupId) {
+        const g = groups.find((group) => group.id === connectSourceGroupId);
+        if (g) {
+            updates.push({
+                id: groupNodeId(connectSourceGroupId),
+                color: groupNodeColors(g, isDark, false, true),
+                borderWidth: 3,
+            });
+        }
+    }
+
+    if (updates.length > 0) nodesDS.update(updates);
 }
 
 export function filterGraphByGroup(
@@ -353,15 +487,19 @@ export function patchTopicHighlight(
     allNodes: NodeData[],
     activeNodeId: number | null,
     prevActiveId: number | null,
+    connectSourceId: number | null = null,
 ) {
     const updates: object[] = [];
 
-    if (prevActiveId != null && prevActiveId !== activeNodeId) {
-        const prev = allNodes.find((n) => n.id === prevActiveId);
+    const idsToReset = new Set<number>();
+    if (prevActiveId != null && prevActiveId !== activeNodeId) idsToReset.add(prevActiveId);
+
+    for (const id of idsToReset) {
+        const prev = allNodes.find((n) => n.id === id);
         if (prev) {
             updates.push({
-                id: prevActiveId,
-                color: topicColor(prev.status, false),
+                id,
+                color: topicColor(prev.status, false, false),
                 size: 12,
                 borderWidth: 1.5,
             });
@@ -371,12 +509,26 @@ export function patchTopicHighlight(
     if (activeNodeId != null) {
         const curr = allNodes.find((n) => n.id === activeNodeId);
         if (curr) {
+            const isConnectSource = connectSourceId === activeNodeId;
             updates.push({
                 id: activeNodeId,
-                color: topicColor(curr.status, true),
+                color: topicColor(curr.status, !isConnectSource, isConnectSource),
                 size: 16,
                 borderWidth: 3,
                 label: truncateTopicLabel(curr.label || curr.title),
+            });
+        }
+    }
+
+    if (connectSourceId != null && connectSourceId !== activeNodeId) {
+        const src = allNodes.find((n) => n.id === connectSourceId);
+        if (src) {
+            updates.push({
+                id: connectSourceId,
+                color: topicColor(src.status, false, true),
+                size: 16,
+                borderWidth: 3,
+                label: truncateTopicLabel(src.label || src.title),
             });
         }
     }

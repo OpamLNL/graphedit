@@ -67,7 +67,7 @@ export function buildViewGraphOptions(
                 face: 'DM Sans, system-ui, sans-serif',
                 strokeWidth: superMode ? 0 : 2,
                 strokeColor: isDark ? '#0f172a' : '#f8fafc',
-                multi: superMode ? true : undefined,
+                ...(superMode ? { multi: true } : {}),
             },
             ...(superMode ? {} : { scaling: topicScaling }),
             margin: (superMode ? 12 : 10) as never,
@@ -77,7 +77,7 @@ export function buildViewGraphOptions(
             smooth: {
                 enabled: true,
                 type: 'cubicBezier',
-                roundness: superMode ? 0.42 : isDenseTopics ? 0.2 : 0.35,
+                roundness: superMode ? 0.2 : isDenseTopics ? 0.2 : 0.2,
             },
             color: {
                 color: superMode ? groupEdgeColor : edgeColor,
@@ -100,7 +100,7 @@ export function buildViewGraphOptions(
             dragNodes: mode === 'edit',
             dragView: true,
             zoomView: true,
-            selectable: superMode,
+            selectable: superMode || mode === 'edit',
             selectConnectedEdges: false,
             multiselect: false,
             navigationButtons: false,

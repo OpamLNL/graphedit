@@ -3,7 +3,10 @@ import type { GraphViewScope } from './Graph';
 interface GraphMapHUDProps {
     viewScope: GraphViewScope;
     groupTitle: string | null;
+    activeGroupTitle?: string | null;
     activeNodeTitle: string | null;
+    editMode?: boolean;
+    connectMode?: boolean;
     onFit: () => void;
     onRecenter: () => void;
     onZoomIn: () => void;
@@ -14,7 +17,10 @@ interface GraphMapHUDProps {
 export default function GraphMapHUD({
     viewScope,
     groupTitle,
+    activeGroupTitle = null,
     activeNodeTitle,
+    editMode = false,
+    connectMode = false,
     onFit,
     onRecenter,
     onZoomIn,
@@ -26,19 +32,38 @@ export default function GraphMapHUD({
             <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg border border-base-content/10 bg-base-100/85 backdrop-blur-sm px-2.5 py-1.5 text-[10px] opacity-70 shadow-sm max-w-[220px]">
                 <p>🖱 перетягни — рух</p>
                 <p>⚙ колесо — zoom</p>
-                {viewScope === 'groups' && (
+                {viewScope === 'groups' && !editMode && (
                     <>
                         <p className="mt-1 text-primary">Клік по групі — відкрити теми</p>
-                        <p>↕ шлях навчання зверху вниз</p>
+                        <p>↕ початок зверху, далі — за ступенем</p>
                         <p>— ··· — рекомендований маршрут</p>
                     </>
+                )}
+                {editMode && viewScope === 'groups' && (
+                    <p className="mt-1 text-primary">
+                        {connectMode
+                            ? 'Зʼєднання груп: клік → клік · Del — ребро'
+                            : 'Клік — обрати групу · «У групу →» — теми'}
+                    </p>
                 )}
                 {viewScope === 'topics' && groupTitle && (
                     <p className="mt-1 truncate" title={groupTitle}>
                         📂 {groupTitle}
                     </p>
                 )}
-                {activeNodeTitle && (
+                {editMode && viewScope === 'topics' && (
+                    <p className="mt-1 text-primary">
+                        {connectMode
+                            ? 'Зʼєднання: клік → клік · Del — ребро'
+                            : 'Редагування · «Зʼєднання ✓» — ребро'}
+                    </p>
+                )}
+                {activeGroupTitle && viewScope === 'groups' && (
+                    <p className="mt-1 text-warning truncate" title={activeGroupTitle}>
+                        ★ {activeGroupTitle}
+                    </p>
+                )}
+                {activeNodeTitle && viewScope === 'topics' && (
                     <p className="mt-1 text-warning truncate" title={activeNodeTitle}>
                         ★ {activeNodeTitle}
                     </p>

@@ -16,7 +16,9 @@ import {
     isGroupNodeId,
     layoutGroups,
     layoutTopicsInGroup,
+    patchGroupHighlight,
     patchTopicHighlight,
+    styledTopicEdges,
     styledTopicNodes,
 } from '../../utils/groupGraph';
 
@@ -53,6 +55,7 @@ export interface GroupData {
 }
 
 export interface GroupEdgeData {
+    id?: number;
     from: string;
     to: string;
     type: string;
@@ -73,8 +76,21 @@ interface GraphProps {
     selectedGroupId: string | null;
     activeNodeId?: number | null;
     activeNodeTitle?: string | null;
+    editMode?: boolean;
+    connectMode?: boolean;
+    connectSourceId?: number | null;
+    activeGroupId?: string | null;
+    connectSourceGroupId?: string | null;
     onGroupSelect?: (groupId: string) => void;
+    onGroupClick?: (groupId: string) => void;
     onNodeClick?: (nodeId: number) => void;
+    onConnectSourceChange?: (nodeId: number | null) => void;
+    onConnectSourceGroupChange?: (groupId: string | null) => void;
+    onConnectNodes?: (fromId: number, toId: number) => void;
+    onConnectGroups?: (fromGroupId: string, toGroupId: string) => void;
+    onEdgesDelete?: (edges: { from: number; to: number; id?: string }[]) => void;
+    onGroupEdgesDelete?: (edges: { from: string; to: string; id?: number }[]) => void;
+    onNodePositionChange?: (nodeId: number, x: number, y: number) => void;
     onBackToGroups?: () => void;
 }
 
@@ -118,8 +134,21 @@ export default function Graph({
     selectedGroupId,
     activeNodeId = null,
     activeNodeTitle = null,
+    activeGroupId = null,
+    editMode = false,
+    connectMode = false,
+    connectSourceId = null,
+    connectSourceGroupId = null,
     onGroupSelect,
+    onGroupClick,
     onNodeClick,
+    onConnectSourceChange,
+    onConnectSourceGroupChange,
+    onConnectNodes,
+    onConnectGroups,
+    onEdgesDelete,
+    onGroupEdgesDelete,
+    onNodePositionChange,
     onBackToGroups,
 }: GraphProps) {
     const shellRef = useRef<HTMLDivElement | null>(null);
@@ -133,6 +162,8 @@ export default function Graph({
     const selectedGroupIdRef = useRef(selectedGroupId);
     const nodeLayoutRef = useRef<Map<number | string, { x: number; y: number }>>(new Map());
     const prevActiveNodeIdRef = useRef<number | null>(null);
+    const prevActiveGroupIdRef = useRef<string | null>(null);
+    const activeGroupIdRef = useRef(activeGroupId);
     const activeNodeIdRef = useRef(activeNodeId);
     const programmaticMoveRef = useRef(false);
     const isDraggingViewRef = useRef(false);
@@ -144,8 +175,20 @@ export default function Graph({
     const fitScaleRef = useRef(0.85);
 
     const onGroupSelectRef = useRef(onGroupSelect);
+    const onGroupClickRef = useRef(onGroupClick);
     const onNodeClickRef = useRef(onNodeClick);
+    const onConnectSourceChangeRef = useRef(onConnectSourceChange);
+    const onConnectSourceGroupChangeRef = useRef(onConnectSourceGroupChange);
+    const onConnectNodesRef = useRef(onConnectNodes);
+    const onConnectGroupsRef = useRef(onConnectGroups);
+    const onEdgesDeleteRef = useRef(onEdgesDelete);
+    const onGroupEdgesDeleteRef = useRef(onGroupEdgesDelete);
+    const onNodePositionChangeRef = useRef(onNodePositionChange);
     const onBackToGroupsRef = useRef(onBackToGroups);
+    const editModeRef = useRef(editMode);
+    const connectModeRef = useRef(connectMode);
+    const connectSourceIdRef = useRef(connectSourceId);
+    const connectSourceGroupIdRef = useRef(connectSourceGroupId);
 
     const { theme } = useTheme();
     const themeRef = useRef(theme);
@@ -154,10 +197,23 @@ export default function Graph({
     viewScopeRef.current = viewScope;
     selectedGroupIdRef.current = selectedGroupId;
     activeNodeIdRef.current = activeNodeId ?? null;
+    activeGroupIdRef.current = activeGroupId ?? null;
     themeRef.current = theme;
     onGroupSelectRef.current = onGroupSelect;
+    onGroupClickRef.current = onGroupClick;
     onNodeClickRef.current = onNodeClick;
+    onConnectSourceChangeRef.current = onConnectSourceChange;
+    onConnectSourceGroupChangeRef.current = onConnectSourceGroupChange;
+    onConnectNodesRef.current = onConnectNodes;
+    onConnectGroupsRef.current = onConnectGroups;
+    onEdgesDeleteRef.current = onEdgesDelete;
+    onGroupEdgesDeleteRef.current = onGroupEdgesDelete;
+    onNodePositionChangeRef.current = onNodePositionChange;
     onBackToGroupsRef.current = onBackToGroups;
+    editModeRef.current = editMode;
+    connectModeRef.current = connectMode;
+    connectSourceIdRef.current = connectSourceId;
+    connectSourceGroupIdRef.current = connectSourceGroupId;
 
     const runProgrammaticMove = useCallback((callback: () => void, duration = 400) => {
         programmaticMoveRef.current = true;
@@ -288,7 +344,7 @@ export default function Graph({
             network.setOptions(
                 buildViewGraphOptions(
                     themeRef.current,
-                    'view',
+                    editModeRef.current ? 'edit' : 'view',
                     visibleNodeCount(data, scope, groupId),
                     isGroupView,
                 ),
@@ -302,14 +358,17 @@ export default function Graph({
                     data.groups,
                     data.groupEdges,
                     themeRef.current === 'dark',
+                    activeGroupIdRef.current,
+                    connectSourceGroupIdRef.current,
+                    editModeRef.current,
                 );
-                const positions = layoutGroups(data.groups);
+                const positions = layoutGroups(data.groups, data.groupEdges);
                 nodeLayoutRef.current = positions;
                 nodesDS.current.add(nodes);
                 edgesDS.current.add(edges);
             } else if (groupId) {
                 const { nodes, edges } = filterGraphByGroup(data.nodes, data.edges, groupId);
-                const layout = layoutTopicsInGroup(nodes);
+                const layout = layoutTopicsInGroup(nodes, edges);
                 nodeLayoutRef.current = layout;
                 nodesDS.current.add(
                     styledTopicNodes(
@@ -317,9 +376,13 @@ export default function Graph({
                         layout,
                         activeNodeIdRef.current,
                         themeRef.current === 'dark',
+                        connectSourceIdRef.current,
+                        editModeRef.current,
                     ),
                 );
-                edgesDS.current.add(edges);
+                edgesDS.current.add(
+                    editModeRef.current ? styledTopicEdges(edges) : edges,
+                );
             }
 
             if (viewChanged && animate && nodesDS.current.length > 0) {
@@ -340,6 +403,7 @@ export default function Graph({
             visibleNodes,
             nodeId,
             prevActiveNodeIdRef.current,
+            connectSourceIdRef.current,
         );
         prevActiveNodeIdRef.current = nodeId;
     }, []);
@@ -351,9 +415,17 @@ export default function Graph({
         }
 
         const isDark = themeRef.current === 'dark';
-        const { nodes, edges } = buildGroupSuperGraph(data.groups, data.groupEdges, isDark);
+        const { nodes, edges } = buildGroupSuperGraph(
+            data.groups,
+            data.groupEdges,
+            isDark,
+            activeGroupIdRef.current,
+            connectSourceGroupIdRef.current,
+            editModeRef.current,
+        );
         nodesDS.current.update(nodes);
-        edgesDS.current.update(edges);
+        edgesDS.current.clear();
+        edgesDS.current.add(edges);
     }, []);
 
     const patchTopicStyles = useCallback(() => {
@@ -361,8 +433,8 @@ export default function Graph({
         const groupId = selectedGroupIdRef.current;
         if (!data || !nodesDS.current || viewScopeRef.current !== 'topics' || !groupId) return;
 
-        const { nodes } = filterGraphByGroup(data.nodes, data.edges, groupId);
-        const layout = layoutTopicsInGroup(nodes);
+        const { nodes, edges } = filterGraphByGroup(data.nodes, data.edges, groupId);
+        const layout = layoutTopicsInGroup(nodes, edges);
         nodeLayoutRef.current = layout;
         nodesDS.current.update(
             styledTopicNodes(
@@ -370,13 +442,23 @@ export default function Graph({
                 layout,
                 activeNodeIdRef.current,
                 themeRef.current === 'dark',
+                connectSourceIdRef.current,
+                editModeRef.current,
             ),
+        );
+        edgesDS.current.clear();
+        edgesDS.current.add(
+            editModeRef.current ? styledTopicEdges(edges) : edges,
         );
     }, []);
 
     handleNodePickRef.current = (rawId: number | string) => {
         if (isGroupNodeId(rawId)) {
-            onGroupSelectRef.current?.(groupIdFromNodeId(String(rawId)));
+            if (editModeRef.current && viewScopeRef.current === 'groups') {
+                handleGroupPickRef.current(groupIdFromNodeId(String(rawId)));
+            } else {
+                onGroupSelectRef.current?.(groupIdFromNodeId(String(rawId)));
+            }
             return;
         }
 
@@ -385,17 +467,92 @@ export default function Graph({
         const nodeId = typeof rawId === 'number' ? rawId : Number(rawId);
         if (Number.isNaN(nodeId)) return;
 
+        if (editModeRef.current && connectModeRef.current) {
+            const sourceId = connectSourceIdRef.current;
+            if (sourceId == null) {
+                onConnectSourceChangeRef.current?.(nodeId);
+                onNodeClickRef.current?.(nodeId);
+                patchTopicHighlight(
+                    nodesDS.current!,
+                    payloadRef.current!.nodes.filter(
+                        (n) => n.groupId === selectedGroupIdRef.current,
+                    ),
+                    nodeId,
+                    prevActiveNodeIdRef.current,
+                    nodeId,
+                );
+                prevActiveNodeIdRef.current = nodeId;
+                activeNodeIdRef.current = nodeId;
+                return;
+            }
+            if (sourceId === nodeId) {
+                onConnectSourceChangeRef.current?.(null);
+                return;
+            }
+            onConnectNodesRef.current?.(sourceId, nodeId);
+            onConnectSourceChangeRef.current?.(null);
+            return;
+        }
+
         activeNodeIdRef.current = nodeId;
         onNodeClickRef.current?.(nodeId);
         highlightTopicNode(nodeId);
-        focusNodeById(nodeId, false);
-        localStorage.setItem('lastFocusedNodeId', nodeId.toString());
+        if (!editModeRef.current) {
+            focusNodeById(nodeId, false);
+            localStorage.setItem('lastFocusedNodeId', nodeId.toString());
+        }
     };
 
     handleGroupPickRef.current = (groupId: string) => {
         const now = Date.now();
         if (now - lastGroupPickAtRef.current < 250) return;
         lastGroupPickAtRef.current = now;
+
+        if (viewScopeRef.current !== 'groups') return;
+
+        if (editModeRef.current) {
+            if (connectModeRef.current) {
+                const sourceId = connectSourceGroupIdRef.current;
+                if (sourceId == null) {
+                    onConnectSourceGroupChangeRef.current?.(groupId);
+                    onGroupClickRef.current?.(groupId);
+                    activeGroupIdRef.current = groupId;
+                    patchGroupHighlight(
+                        nodesDS.current!,
+                        payloadRef.current!.groups,
+                        groupId,
+                        prevActiveGroupIdRef.current,
+                        groupId,
+                        themeRef.current === 'dark',
+                    );
+                    prevActiveGroupIdRef.current = groupId;
+                    return;
+                }
+                if (sourceId === groupId) {
+                    onConnectSourceGroupChangeRef.current?.(null);
+                    patchGroupStyles();
+                    return;
+                }
+                onConnectGroupsRef.current?.(sourceId, groupId);
+                onConnectSourceGroupChangeRef.current?.(null);
+                patchGroupStyles();
+                return;
+            }
+
+            activeGroupIdRef.current = groupId;
+            onGroupClickRef.current?.(groupId);
+            patchGroupHighlight(
+                nodesDS.current!,
+                payloadRef.current!.groups,
+                groupId,
+                prevActiveGroupIdRef.current,
+                connectSourceGroupIdRef.current,
+                themeRef.current === 'dark',
+            );
+            prevActiveGroupIdRef.current = groupId;
+            return;
+        }
+
         onGroupSelectRef.current?.(groupId);
     };
 
@@ -414,10 +571,21 @@ export default function Graph({
         );
         networkRef.current = network;
 
-        network.on('dragStart', () => {
-            isDraggingViewRef.current = true;
+        network.on('dragStart', (params) => {
+            isDraggingViewRef.current = !(params.nodes && params.nodes.length > 0);
         });
-        network.on('dragEnd', () => {
+        network.on('dragEnd', (params) => {
+            if (params.nodes && params.nodes.length > 0 && editModeRef.current) {
+                const positions = network.getPositions(params.nodes);
+                for (const rawId of params.nodes) {
+                    const pos = positions[rawId];
+                    if (!pos) continue;
+                    const nodeId = typeof rawId === 'number' ? rawId : Number(rawId);
+                    if (!Number.isNaN(nodeId)) {
+                        onNodePositionChangeRef.current?.(nodeId, pos.x, pos.y);
+                    }
+                }
+            }
             isDraggingViewRef.current = false;
         });
 
@@ -464,12 +632,66 @@ export default function Graph({
         };
 
         network.on('click', (params) => {
-            if (viewScopeRef.current !== 'groups') return;
-            pointerDownRef.current = null;
+            if (viewScopeRef.current === 'groups') {
+                if (
+                    editModeRef.current &&
+                    connectModeRef.current &&
+                    (!params.nodes || params.nodes.length === 0) &&
+                    (!params.edges || params.edges.length === 0)
+                ) {
+                    onConnectSourceGroupChangeRef.current?.(null);
+                    patchGroupStyles();
+                }
+                pointerDownRef.current = null;
 
-            const groupId = resolveGroupClickId(params);
-            if (groupId) handleGroupPickRef.current(groupId);
+                const groupId = resolveGroupClickId(params);
+                if (groupId) handleGroupPickRef.current(groupId);
+                return;
+            }
+
+            if (
+                editModeRef.current &&
+                connectModeRef.current &&
+                (!params.nodes || params.nodes.length === 0) &&
+                (!params.edges || params.edges.length === 0)
+            ) {
+                onConnectSourceChangeRef.current?.(null);
+            }
         });
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (!editModeRef.current) return;
+            if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+            const net = networkRef.current;
+            const eds = edgesDS.current;
+            if (!net || !eds) return;
+            const selected = net.getSelectedEdges();
+            if (!selected.length) return;
+            e.preventDefault();
+
+            if (viewScopeRef.current === 'groups') {
+                const toDelete = selected.map((edgeId) => {
+                    const edge = eds.get(edgeId) as { from: string; to: string };
+                    return {
+                        from: groupIdFromNodeId(String(edge.from)),
+                        to: groupIdFromNodeId(String(edge.to)),
+                        id: String(edgeId).startsWith('ge-')
+                            ? Number(String(edgeId).replace(/^ge-(\d+)$/, '$1')) || undefined
+                            : undefined,
+                    };
+                });
+                onGroupEdgesDeleteRef.current?.(toDelete);
+                return;
+            }
+
+            if (viewScopeRef.current !== 'topics') return;
+            const toDelete = selected.map((edgeId) => {
+                const edge = eds.get(edgeId) as { from: number; to: number };
+                return { from: Number(edge.from), to: Number(edge.to), id: String(edgeId) };
+            });
+            onEdgesDeleteRef.current?.(toDelete);
+        };
+        window.addEventListener('keydown', onKeyDown);
 
         const onMouseDown = (e: MouseEvent) => {
             if (e.button !== 0) return;
@@ -533,6 +755,7 @@ export default function Graph({
             container.removeEventListener('mouseup', onMouseUp);
             container.removeEventListener('touchstart', onTouchStart);
             container.removeEventListener('touchend', onTouchEnd);
+            window.removeEventListener('keydown', onKeyDown);
             window.__focusGraphNode = undefined;
             window.__fitGraphView = undefined;
             network.destroy();
@@ -552,13 +775,39 @@ export default function Graph({
             nodesDS.current != null &&
             nodesDS.current.length > 0;
 
+        if (sameView && viewScope === 'groups') {
+            patchGroupStyles();
+            return;
+        }
+
         if (sameView && viewScope === 'topics') {
             patchTopicStyles();
             return;
         }
 
         applyView(viewScope, selectedGroupId, true);
-    }, [payload, viewScope, selectedGroupId, applyView, patchTopicStyles]);
+    }, [payload, viewScope, selectedGroupId, applyView, patchTopicStyles, patchGroupStyles]);
+
+    useEffect(() => {
+        if (viewScope !== 'groups' || !nodesDS.current || !payload) return;
+        if (activeGroupId == null) return;
+        if (activeGroupId === prevActiveGroupIdRef.current) return;
+
+        patchGroupHighlight(
+            nodesDS.current,
+            payload.groups,
+            activeGroupId,
+            prevActiveGroupIdRef.current,
+            connectSourceGroupId,
+            themeRef.current === 'dark',
+        );
+        prevActiveGroupIdRef.current = activeGroupId;
+    }, [activeGroupId, viewScope, payload, connectSourceGroupId]);
+
+    useEffect(() => {
+        if (viewScope !== 'groups' || !nodesDS.current) return;
+        patchGroupStyles();
+    }, [connectSourceGroupId, connectMode, editMode, viewScope, patchGroupStyles]);
 
     // Підсвітка обраної теми (без повторного фокусу камери)
     useEffect(() => {
@@ -570,11 +819,16 @@ export default function Graph({
     }, [activeNodeId, viewScope, selectedGroupId, highlightTopicNode]);
 
     useEffect(() => {
+        if (viewScope !== 'topics' || !nodesDS.current) return;
+        patchTopicStyles();
+    }, [connectSourceId, connectMode, editMode, viewScope, patchTopicStyles]);
+
+    useEffect(() => {
         if (!networkRef.current || isDraggingViewRef.current) return;
         networkRef.current.setOptions(
             buildViewGraphOptions(
                 theme,
-                'view',
+                editMode ? 'edit' : 'view',
                 payload
                     ? visibleNodeCount(payload, viewScope, selectedGroupId)
                     : 0,
@@ -586,7 +840,7 @@ export default function Graph({
         } else if (viewScope === 'groups') {
             patchGroupStyles();
         }
-    }, [theme, viewScope, selectedGroupId, payload, patchTopicStyles, patchGroupStyles]);
+    }, [theme, editMode, viewScope, selectedGroupId, payload, patchTopicStyles, patchGroupStyles]);
 
     useEffect(() => {
         const el = shellRef.current;
@@ -605,6 +859,7 @@ export default function Graph({
     }, []);
 
     const selectedGroup = payload?.groups.find((g) => g.id === selectedGroupId) ?? null;
+    const activeGroup = payload?.groups.find((g) => g.id === activeGroupId) ?? null;
 
     return (
         <div ref={shellRef} className="absolute inset-0 graph-map-shell overflow-hidden rounded-lg">
@@ -612,7 +867,10 @@ export default function Graph({
             <GraphMapHUD
                 viewScope={viewScope}
                 groupTitle={selectedGroup?.title ?? null}
+                activeGroupTitle={activeGroup?.title ?? null}
                 activeNodeTitle={activeNodeTitle}
+                editMode={editMode}
+                connectMode={connectMode}
                 onFit={() => fitView(true, viewScope === 'groups' ? 88 : 56)}
                 onRecenter={() => {
                     const id = activeNodeIdRef.current;
