@@ -131,6 +131,12 @@ export interface ImportLibraryResponse {
     nodes: ImportLibraryNode[];
 }
 
+export interface ValidateGraphPayload {
+    nodes: { id: number; title: string; groupId?: string | null }[];
+    edges: { from: number; to: number }[];
+    groups?: { id: string; title: string }[];
+}
+
 export const knowledgeMapsApi = {
     /** Каталог: усі опубліковані карти */
     list: () => apiFetch<KnowledgeMap[]>('/knowledge-maps'),
@@ -165,8 +171,11 @@ export const knowledgeMapsApi = {
             body: JSON.stringify(payload),
         }),
 
-    validate: (id: number) =>
-        apiFetch<GraphValidationResult>(`/knowledge-maps/${id}/validate`),
+    validate: (id: number, graph: ValidateGraphPayload) =>
+        apiFetch<GraphValidationResult>(`/knowledge-maps/${id}/validate`, {
+            method: 'POST',
+            body: JSON.stringify(graph),
+        }),
 
     publish: (id: number) =>
         apiFetch<KnowledgeMap>(`/knowledge-maps/${id}/publish`, { method: 'PATCH' }),

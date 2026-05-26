@@ -9,7 +9,7 @@ import type {
     GroupData,
     GroupEdgeData,
 } from '../Graph/Graph';
-import { deriveGroupsFromNodes, deriveGroupEdgesFromNodes, filterGroupEdgesForGroups, filterGroupsForMap } from '../../utils/groupGraph';
+import { deriveGroupsFromNodes, deriveGroupEdgesFromNodes, filterGroupEdgesForGroups } from '../../utils/groupGraph';
 import { layoutTopicGraphByEdges } from '../../utils/graphLayout';
 
 export type KnowledgeNodeData = {
@@ -319,13 +319,11 @@ export function editorStateToGraphPayload(
         resolvedGroups = deriveGroupsFromNodes(nodeData);
         resolvedGroupEdges = deriveGroupEdgesFromNodes(nodeData, edgeData);
     } else if (resolvedGroups.length > 0) {
-        resolvedGroups = filterGroupsForMap(
-            resolvedGroups,
-            groupEdges,
-            nodeData.map((n) => n.groupId),
-        );
         const visibleIds = new Set(resolvedGroups.map((g) => g.id));
-        resolvedGroupEdges = filterGroupEdgesForGroups(groupEdges, visibleIds);
+        resolvedGroupEdges = filterGroupEdgesForGroups(
+            groupEdges.map((e) => ({ from: e.from, to: e.to, type: e.type, id: e.id })),
+            visibleIds,
+        );
     }
 
     return {

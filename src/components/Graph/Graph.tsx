@@ -102,6 +102,7 @@ interface GraphProps {
     onConnectGroups?: (fromGroupId: string, toGroupId: string) => void;
     onEdgesDelete?: (edges: { from: number; to: number; id?: string }[]) => void;
     onGroupEdgesDelete?: (edges: { from: string; to: string; id?: number }[]) => void;
+    onNodeDelete?: (nodeId: number) => void;
     onNodePositionChange?: (nodeId: number, x: number, y: number) => void;
     onGroupPositionChange?: (groupId: string, x: number, y: number) => void;
     onBackToGroups?: () => void;
@@ -202,6 +203,7 @@ export default function Graph({
     onConnectGroups,
     onEdgesDelete,
     onGroupEdgesDelete,
+    onNodeDelete,
     onNodePositionChange,
     onGroupPositionChange,
     onBackToGroups,
@@ -244,6 +246,7 @@ export default function Graph({
     const onConnectGroupsRef = useRef(onConnectGroups);
     const onEdgesDeleteRef = useRef(onEdgesDelete);
     const onGroupEdgesDeleteRef = useRef(onGroupEdgesDelete);
+    const onNodeDeleteRef = useRef(onNodeDelete);
     const onNodePositionChangeRef = useRef(onNodePositionChange);
     const onGroupPositionChangeRef = useRef(onGroupPositionChange);
     const onBackToGroupsRef = useRef(onBackToGroups);
@@ -271,6 +274,7 @@ export default function Graph({
     onConnectGroupsRef.current = onConnectGroups;
     onEdgesDeleteRef.current = onEdgesDelete;
     onGroupEdgesDeleteRef.current = onGroupEdgesDelete;
+    onNodeDeleteRef.current = onNodeDelete;
     onNodePositionChangeRef.current = onNodePositionChange;
     onGroupPositionChangeRef.current = onGroupPositionChange;
     onBackToGroupsRef.current = onBackToGroups;
@@ -616,7 +620,8 @@ export default function Graph({
                 }),
             );
         } else {
-            nodesDS.current.update(styled.nodes);
+            nodesDS.current.clear();
+            nodesDS.current.add(styled.nodes);
         }
 
         edgesDS.current.clear();
@@ -672,7 +677,8 @@ export default function Graph({
                 }),
             );
         } else {
-            nodesDS.current.update(styled);
+            nodesDS.current.clear();
+            nodesDS.current.add(styled);
         }
 
         edgesDS.current.clear();
@@ -809,6 +815,10 @@ export default function Graph({
             net.unselectAll();
             net.selectEdges([edgeId]);
             onClearSelectionRef.current?.();
+            if (connectModeRef.current) {
+                onConnectSourceChangeRef.current?.(null);
+                onConnectSourceGroupChangeRef.current?.(null);
+            }
             return true;
         };
 
@@ -865,10 +875,10 @@ export default function Graph({
             const pickRadius = editModeRef.current ? 18 : 56;
             const nodeId = pickNodeAtPointer(net, pointer, visibleIds, pickRadius);
 
-            if (editModeRef.current && !connectModeRef.current) {
+            if (editModeRef.current) {
                 if (pickEdgeAtPointer(net, pointer)) return;
 
-                if (nodeId == null) {
+                if (!connectModeRef.current && nodeId == null) {
                     net.unselectAll();
                     onClearSelectionRef.current?.();
                     return;
@@ -905,11 +915,11 @@ export default function Graph({
             const rect = container.getBoundingClientRect();
             const pointer = { x: clientX - rect.left, y: clientY - rect.top };
 
-            if (editModeRef.current && !connectModeRef.current) {
+            if (editModeRef.current) {
                 if (pickEdgeAtPointer(net, pointer)) return;
 
                 const nodeAt = net.getNodeAt(pointer);
-                if (nodeAt == null) {
+                if (!connectModeRef.current && nodeAt == null) {
                     net.unselectAll();
                     onClearSelectionRef.current?.();
                     return;
@@ -931,7 +941,6 @@ export default function Graph({
             if (viewScopeRef.current === 'groups') {
                 if (
                     editModeRef.current &&
-                    !connectModeRef.current &&
                     params.edges &&
                     params.edges.length > 0
                 ) {
@@ -961,7 +970,6 @@ export default function Graph({
 
             if (
                 editModeRef.current &&
-                !connectModeRef.current &&
                 params.edges &&
                 params.edges.length > 0
             ) {
@@ -969,6 +977,9 @@ export default function Graph({
                 network.unselectAll();
                 network.selectEdges(params.edges);
                 onClearSelectionRef.current?.();
+                if (connectModeRef.current) {
+                    onConnectSourceChangeRef.current?.(null);
+                }
                 pointerDownRef.current = null;
                 return;
             }
@@ -1013,7 +1024,13 @@ export default function Graph({
             e.stopPropagation();
 
             if (selectedEdges.length === 0) {
-                // Del з обраним вузлом — не видаляємо вузол з клавіатури (лише кнопка в панелі)
+                if (viewScopeRef.current !== 'topics' || selectedNodes.length === 0) return;
+                const rawId = selectedNodes[0];
+                if (isGroupNodeId(rawId)) return;
+                const nodeId = typeof rawId === 'number' ? rawId : Number(rawId);
+                if (Number.isNaN(nodeId)) return;
+                onNodeDeleteRef.current?.(nodeId);
+                net.unselectAll();
                 return;
             }
 

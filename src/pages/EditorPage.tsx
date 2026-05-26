@@ -285,8 +285,11 @@ export default function EditorPage() {
     );
 
     const activeGroup = useMemo(
-        () => resolvedGroups.find((g) => g.id === activeGroupId) ?? null,
-        [resolvedGroups, activeGroupId],
+        () =>
+            resolvedGroups.find((g) => g.id === activeGroupId) ??
+            groups.find((g) => g.id === activeGroupId) ??
+            null,
+        [resolvedGroups, groups, activeGroupId],
     );
 
     const activeNode = useMemo((): KnowledgeNodeData | null => {
@@ -352,7 +355,7 @@ export default function EditorPage() {
     const showValidationSidePanel = rightPanelTab === 'validation' && validation != null;
     const showPropertiesContent =
         rightPanelTab === 'properties' &&
-        (viewScope === 'topics' || (viewScope === 'groups' && activeGroup));
+        (viewScope === 'topics' || (viewScope === 'groups' && (activeGroup || activeGroupId)));
     /** Тримаємо aside змонтованим після валідації, щоб ширина графа не стрибала */
     const canShowRightAside =
         showValidationSidePanel ||
@@ -368,11 +371,25 @@ export default function EditorPage() {
               : 'Властивості';
 
     const handleValidate = async () => {
-        if (!mapId) return;
+        if (!mapId || !editorState) return;
         setValidating(true);
         setStatusMsg(null);
         try {
-            const result = await knowledgeMapsApi.validate(mapId);
+            const payload = editorStateToGraphPayload(
+                editorState,
+                groups,
+                groupEdges,
+                topicById,
+            );
+            const result = await knowledgeMapsApi.validate(mapId, {
+                nodes: payload.nodes.map((n) => ({
+                    id: n.id,
+                    title: n.title,
+                    groupId: n.groupId,
+                })),
+                edges: payload.edges.map((e) => ({ from: e.from, to: e.to })),
+                groups: payload.groups.map((g) => ({ id: g.id, title: g.title })),
+            });
             setValidation(result);
             setShowRightPanel(true);
             setRightPanelTab('validation');
@@ -573,6 +590,8 @@ export default function EditorPage() {
         setGroups((prev) => [...prev, newGroup]);
         unsavedGroupIdsRef.current.add(id);
         setActiveGroupId(id);
+        setShowRightPanel(true);
+        setRightPanelTab('properties');
         markDirty();
     };
 
@@ -1014,25 +1033,31 @@ export default function EditorPage() {
         markDirty();
     };
 
-    const handleDeleteActiveNode = () => {
-        if (activeNodeId == null || !editorState) return;
-        if (activeNodeId > 0) {
-            setDeletedNodeIds((prev) => [...prev, activeNodeId]);
+    const handleDeleteNode = (nodeId: number) => {
+        if (!editorState) return;
+        if (nodeId > 0) {
+            setDeletedNodeIds((prev) => [...prev, nodeId]);
         }
         updateEditorState((prev) =>
             prev
                 ? {
                       ...prev,
-                      nodes: prev.nodes.filter((n) => n.id !== activeNodeId),
+                      nodes: prev.nodes.filter((n) => n.id !== nodeId),
                       edges: prev.edges.filter(
-                          (e) =>
-                              e.fromNodeId !== activeNodeId && e.toNodeId !== activeNodeId,
+                          (e) => e.fromNodeId !== nodeId && e.toNodeId !== nodeId,
                       ),
                   }
                 : prev,
         );
-        setActiveNodeId(null);
+        if (activeNodeId === nodeId) {
+            setActiveNodeId(null);
+        }
         markDirty();
+    };
+
+    const handleDeleteActiveNode = () => {
+        if (activeNodeId == null) return;
+        handleDeleteNode(activeNodeId);
     };
 
     useEffect(() => {
@@ -1272,8 +1297,8 @@ export default function EditorPage() {
                             ? 'Групи: клік початкова → клік кінцева · Del — ребро · «У групу →» — теми всередині'
                             : 'Групи: клік — обрати · клік стрілки — обрати ребро · Del — видалити ребро · «Зʼєднання ✓» — нове ребро · «У групу →» — теми'
                         : connectMode
-                          ? 'Теми: клік початковий → клік кінцевий вузол · Del — видалити ребро · «Зберегти»'
-                          : 'Теми: клік — обрати вузол · клік стрілки — обрати ребро · Del — видалити ребро · «Зʼєднання ✓» — нове ребро'}
+                          ? 'Теми: клік початковий → клік кінцевий вузол · Del — видалити вузол/ребро · «Зберегти»'
+                          : 'Теми: клік — обрати вузол · клік стрілки — обрати ребро · Del — видалити · «Зʼєднання ✓» — нове ребро'}
                 </p>
 
                 {statusMsg && (
@@ -1303,13 +1328,18 @@ export default function EditorPage() {
                                 connectSourceId={connectSourceId}
                                 connectSourceGroupId={connectSourceGroupId}
                                 onGroupClick={setActiveGroupId}
-                                onNodeClick={setActiveNodeId}
+                                onNodeClick={(nodeId) => {
+                                    setActiveNodeId(nodeId);
+                                    setRightPanelTab('properties');
+                                    setShowRightPanel(true);
+                                }}
                                 onConnectSourceChange={setConnectSourceId}
                                 onConnectSourceGroupChange={setConnectSourceGroupId}
                                 onConnectNodes={handleConnectNodes}
                                 onConnectGroups={handleConnectGroups}
                                 onEdgesDelete={handleEdgesDelete}
                                 onGroupEdgesDelete={handleGroupEdgesDelete}
+                                onNodeDelete={handleDeleteNode}
                                 onNodePositionChange={handleNodePositionChange}
                                 onGroupPositionChange={handleGroupPositionChange}
                                 onBackToGroups={handleBackToGroups}
@@ -1373,6 +1403,7 @@ export default function EditorPage() {
                                         type="text"
                                         className="input input-sm input-bordered w-full"
                                         value={activeGroup.title}
+                                        spellCheck={false}
                                         onChange={(e) => handleGroupPatch({ title: e.target.value })}
                                     />
                                 </label>
@@ -1381,6 +1412,8 @@ export default function EditorPage() {
                                     <textarea
                                         className="textarea textarea-sm textarea-bordered w-full min-h-[80px]"
                                         value={activeGroup.description ?? ''}
+                                        spellCheck={false}
+                                        autoCorrect="off"
                                         onChange={(e) =>
                                             handleGroupPatch({
                                                 description: e.target.value || null,
