@@ -2,13 +2,16 @@ import { useEffect, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { knowledgeMapsApi, type KnowledgeMap } from '../api/knowledgeMaps';
 import { useAuth } from '../context/AuthContext';
+import { apiErrorMessage } from '../utils/apiErrorMessage';
+import MapGraphValidationBadge from '../components/MapGraphValidationBadge';
 
 export default function MyMapsPage() {
-    const { user, role, loading: authLoading } = useAuth();
+    const { user, role, loading: authLoading, token } = useAuth();
     const [maps, setMaps] = useState<KnowledgeMap[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [creating, setCreating] = useState(false);
+    const [deletingId, setDeletingId] = useState<number | null>(null);
     const [showCreate, setShowCreate] = useState(false);
     const [newTitle, setNewTitle] = useState('');
     const [newDesc, setNewDesc] = useState('');
@@ -16,20 +19,42 @@ export default function MyMapsPage() {
     const isEditor = role === 'admin' || role === 'teacher';
 
     useEffect(() => {
-        if (!user) {
+        if (authLoading) return;
+
+        if (!user || !token) {
+            setMaps([]);
             setLoading(false);
             return;
         }
+
+        let cancelled = false;
+        setLoading(true);
+        setError(null);
+
         knowledgeMapsApi
             .listMine()
-            .then(setMaps)
-            .catch((e) => setError(e.message))
-            .finally(() => setLoading(false));
-    }, [user]);
+            .then((data) => {
+                if (cancelled) return;
+                setMaps(data);
+                setError(null);
+            })
+            .catch((e) => {
+                if (cancelled) return;
+                setError(apiErrorMessage(e, 'Не вдалося завантажити карти'));
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [user, authLoading, token]);
 
     const handleCreate = async () => {
         if (!newTitle.trim()) return;
         setCreating(true);
+        setError(null);
         try {
             const map = await knowledgeMapsApi.create({
                 title: newTitle.trim(),
@@ -41,9 +66,27 @@ export default function MyMapsPage() {
             setNewDesc('');
             window.location.href = `/editor/${map.id}`;
         } catch (e) {
-            console.error(e);
+            setError(apiErrorMessage(e, 'Не вдалося створити карту'));
         } finally {
             setCreating(false);
+        }
+    };
+
+    const handleDelete = async (map: KnowledgeMap) => {
+        const confirmed = window.confirm(
+            `Видалити карту «${map.title}»?\n\nУсі вузли, зображення та прогрес по цій карті буде втрачено.`,
+        );
+        if (!confirmed) return;
+
+        setDeletingId(map.id);
+        setError(null);
+        try {
+            await knowledgeMapsApi.remove(map.id);
+            setMaps((prev) => prev.filter((m) => m.id !== map.id));
+        } catch (e) {
+            setError(apiErrorMessage(e, 'Не вдалося видалити карту'));
+        } finally {
+            setDeletingId(null);
         }
     };
 
@@ -103,16 +146,20 @@ export default function MyMapsPage() {
 
             {!loading && maps.length > 0 && (
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {maps.map((map) => (
-                        <MapCard
-                            key={map.id}
-                            map={map}
-                            canEdit={
-                                isEditor &&
-                                (!map.ownerUid || map.ownerUid === user.uid)
-                            }
-                        />
-                    ))}
+                    {maps.map((map) => {
+                        const isOwner =
+                            isEditor && (!map.ownerUid || map.ownerUid === user.uid);
+                        return (
+                            <MapCard
+                                key={map.id}
+                                map={map}
+                                canEdit={isOwner}
+                                canDelete={isOwner}
+                                deleting={deletingId === map.id}
+                                onDelete={() => void handleDelete(map)}
+                            />
+                        );
+                    })}
                 </div>
             )}
 
@@ -145,7 +192,7 @@ export default function MyMapsPage() {
                             </button>
                             <button
                                 className="btn btn-primary btn-sm"
-                                onClick={handleCreate}
+                                onClick={() => void handleCreate()}
                                 disabled={creating || !newTitle.trim()}
                             >
                                 {creating ? 'Створення...' : 'Створити'}
@@ -161,59 +208,80 @@ export default function MyMapsPage() {
     );
 }
 
-function MapCard({ map, canEdit }: { map: KnowledgeMap; canEdit: boolean }) {
+function MapCard({
+    map,
+    canEdit,
+    canDelete,
+    deleting,
+    onDelete,
+}: {
+    map: KnowledgeMap;
+    canEdit: boolean;
+    canDelete: boolean;
+    deleting: boolean;
+    onDelete: () => void;
+}) {
     const navigate = useNavigate();
     const updated = new Date(map.updatedAt).toLocaleDateString('uk-UA');
     const canView = map.status === 'published';
     const cardHref = canView ? `/map/${map.id}` : canEdit ? `/editor/${map.id}` : `/map/${map.id}`;
 
     return (
-        <Link
-            to={cardHref}
-            className="glass-card p-5 flex flex-col gap-3 hover:border-primary/30 transition-colors no-underline text-base-content cursor-pointer"
-        >
-            <div className="flex items-start justify-between gap-2">
-                <h2 className="font-display font-bold text-base leading-snug">{map.title}</h2>
-                <span
-                    className={`badge badge-sm shrink-0 ${
-                        map.status === 'published' ? 'badge-success' : 'badge-warning'
-                    }`}
-                >
-                    {map.status === 'published' ? 'published' : 'draft'}
-                </span>
-            </div>
+        <div className="glass-card p-5 flex flex-col gap-3 hover:border-primary/30 transition-colors">
+            <Link to={cardHref} className="flex flex-col gap-3 no-underline text-base-content flex-1">
+                <div className="flex items-start justify-between gap-2">
+                    <h2 className="font-display font-bold text-base leading-snug">{map.title}</h2>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                        <span
+                            className={`badge badge-sm ${
+                                map.status === 'published' ? 'badge-success' : 'badge-warning'
+                            }`}
+                        >
+                            {map.status === 'published' ? 'published' : 'draft'}
+                        </span>
+                        <MapGraphValidationBadge map={map} />
+                    </div>
+                </div>
 
-            {map.description && (
-                <p className="text-xs opacity-55 line-clamp-2">{map.description}</p>
-            )}
+                {map.description && (
+                    <p className="text-xs opacity-55 line-clamp-2">{map.description}</p>
+                )}
 
-            <p className="text-[10px] opacity-40">Оновлено {updated}</p>
+                <p className="text-[10px] opacity-40">Оновлено {updated}</p>
+            </Link>
 
             <div className="flex gap-2 mt-auto pt-2">
                 {canView && (
-                    <span className="btn btn-outline btn-sm flex-1 pointer-events-none">
+                    <Link to={`/map/${map.id}`} className="btn btn-outline btn-sm flex-1">
                         Переглянути
-                    </span>
+                    </Link>
                 )}
                 {canEdit && (
                     <button
                         type="button"
                         className="btn btn-primary btn-sm flex-1"
-                        onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            navigate(`/editor/${map.id}`);
-                        }}
+                        onClick={() => navigate(`/editor/${map.id}`)}
                     >
                         {canView ? 'Редагувати' : 'Відкрити редактор'}
                     </button>
                 )}
                 {!canView && !canEdit && (
-                    <span className="btn btn-primary btn-sm flex-1 pointer-events-none">
+                    <Link to={`/map/${map.id}`} className="btn btn-primary btn-sm flex-1">
                         Відкрити
-                    </span>
+                    </Link>
+                )}
+                {canDelete && (
+                    <button
+                        type="button"
+                        className="btn btn-error btn-outline btn-sm shrink-0"
+                        disabled={deleting}
+                        onClick={onDelete}
+                        title="Видалити карту"
+                    >
+                        {deleting ? '...' : '×'}
+                    </button>
                 )}
             </div>
-        </Link>
+        </div>
     );
 }

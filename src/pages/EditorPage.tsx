@@ -43,6 +43,7 @@ import { nodesApi } from '../api/nodes';
 import { topicsApi, type Topic } from '../api/topics';
 import { ApiError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import MapGraphValidationBadge from '../components/MapGraphValidationBadge';
 
 function groupLayoutOverridesFromMeta(
     groupMeta: GroupGraphResponse | null | undefined,
@@ -62,8 +63,18 @@ function groupLayoutOverridesFromMeta(
 function parseApiError(e: unknown): string {
     if (e instanceof ApiError) {
         try {
-            const body = JSON.parse(e.message) as { message?: string | string[]; errors?: string[] };
+            const body = JSON.parse(e.message) as {
+                message?: string | string[] | { message?: string; errors?: string[] };
+                errors?: string[];
+            };
             if (Array.isArray(body.errors) && body.errors.length > 0) return body.errors.join('; ');
+            if (typeof body.message === 'object' && body.message !== null) {
+                const nested = body.message;
+                if (Array.isArray(nested.errors) && nested.errors.length > 0) {
+                    return nested.errors.join('; ');
+                }
+                if (typeof nested.message === 'string') return nested.message;
+            }
             if (Array.isArray(body.message)) return body.message.join('; ');
             if (typeof body.message === 'string') return body.message;
         } catch {
@@ -71,6 +82,7 @@ function parseApiError(e: unknown): string {
         }
         return e.message;
     }
+    if (e instanceof Error) return e.message;
     return 'Невідома помилка';
 }
 
@@ -339,102 +351,105 @@ export default function EditorPage() {
         }
     };
 
-    const handleSave = async () => {
+    const persistEditorGraph = useCallback(async (): Promise<void> => {
         const currentEditorState = editorStateRef.current;
-        if (!mapId || !currentEditorState) return;
+        if (!mapId || !currentEditorState) {
+            throw new Error('Немає даних для збереження');
+        }
+
+        const layoutSnapshot = nodeLayoutReaderRef.current?.() ?? new Map();
+        let stateForSave = applyLayoutSnapshot(currentEditorState, layoutSnapshot);
+        stateForSave = applyPendingNodePositions(
+            stateForSave,
+            pendingNodePositionsRef.current,
+        );
+        stateForSave = applyGroupContextForSave(
+            stateForSave,
+            new Map(topics.map((t) => [t.id, t])),
+            viewScope === 'topics' ? selectedGroupId : null,
+            dirtyNodeIdsRef.current,
+        );
+        const groupsForSave =
+            graphPayload?.groups ?? mergeGroupLayouts(groups, groupLayoutOverrides);
+        const payload = editorStateToBulkSave(
+            stateForSave,
+            groupEdgesRef.current,
+            groupsForSave,
+            deletedNodeIdsRef.current,
+            deletedEdgeIdsRef.current,
+            deletedGroupEdgeIdsRef.current,
+            saveSnapshotRef.current,
+            dirtyNodeIdsRef.current,
+            dirtyEdgeKeysRef.current,
+            false,
+            deletedGroupIdsRef.current,
+        );
+
+        const saved = await knowledgeMapsApi.saveGraph(mapId, payload);
+        const updatedTopics = await topicsApi.getAll().catch(() => topics);
+        setTopics(updatedTopics);
+        const tMap = new Map(updatedTopics.map((t) => [t.id, t]));
+        const nextState = initEditorState(saved, tMap);
+        updateEditorState(nextState);
+        const groupMeta = await nodesApi.getGroupGraph(mapId).catch(() => null);
+        let nextGroups = groups;
+        let nextOverrides = groupLayoutOverrides;
+        let nextGroupEdges = groupEdges;
+        if (groupMeta) {
+            nextGroups = groupMeta.groups ?? [];
+            nextOverrides = groupLayoutOverridesFromMeta(groupMeta);
+            nextGroupEdges = (groupMeta.groupEdges ?? []).map((e) => ({
+                id: e.id,
+                from: e.from,
+                to: e.to,
+                type: e.type,
+            }));
+            setGroups(nextGroups);
+            setGroupLayoutOverrides(nextOverrides);
+            setGroupEdges(nextGroupEdges);
+        }
+        saveSnapshotRef.current = buildEditorSaveSnapshot(
+            nextState,
+            nextGroupEdges,
+            mergeGroupLayouts(
+                nextGroups.length > 0
+                    ? nextGroups
+                    : editorStateToGraphPayload(nextState, nextGroups, nextGroupEdges, tMap)
+                          .groups,
+                nextOverrides,
+            ),
+        );
+        pendingNodePositionsRef.current.clear();
+        dirtyNodeIdsRef.current.clear();
+        dirtyEdgeKeysRef.current.clear();
+        setDeletedNodeIds([]);
+        setDeletedEdgeIds([]);
+        setDeletedGroupEdgeIds([]);
+        setDeletedGroupIds([]);
+        setDirty(false);
+        unsavedGroupIdsRef.current.clear();
+        setConnectSourceId(null);
+        setConnectSourceGroupId(null);
+
+        const mapMeta = await knowledgeMapsApi.getOne(mapId);
+        setMap(mapMeta);
+    }, [
+        mapId,
+        topics,
+        graphPayload,
+        groups,
+        groupLayoutOverrides,
+        groupEdges,
+        viewScope,
+        selectedGroupId,
+        updateEditorState,
+    ]);
+
+    const handleSave = async () => {
         setSaving(true);
         setStatusMsg(null);
         try {
-            const layoutSnapshot = nodeLayoutReaderRef.current?.() ?? new Map();
-            let stateForSave = applyLayoutSnapshot(currentEditorState, layoutSnapshot);
-            stateForSave = applyPendingNodePositions(
-                stateForSave,
-                pendingNodePositionsRef.current,
-            );
-            stateForSave = applyGroupContextForSave(
-                stateForSave,
-                new Map(topics.map((t) => [t.id, t])),
-                viewScope === 'topics' ? selectedGroupId : null,
-                dirtyNodeIdsRef.current,
-            );
-            const groupsForSave =
-                graphPayload?.groups ?? mergeGroupLayouts(groups, groupLayoutOverrides);
-            const payload = editorStateToBulkSave(
-                stateForSave,
-                groupEdgesRef.current,
-                groupsForSave,
-                deletedNodeIdsRef.current,
-                deletedEdgeIdsRef.current,
-                deletedGroupEdgeIdsRef.current,
-                saveSnapshotRef.current,
-                dirtyNodeIdsRef.current,
-                dirtyEdgeKeysRef.current,
-                false,
-                deletedGroupIdsRef.current,
-            );
-            console.log('[Editor save] PATCH /knowledge-maps/' + mapId + '/graph', {
-                payload,
-                summary: {
-                    nodes: payload.nodes.length,
-                    edges: payload.edges.length,
-                    groupEdges: payload.groupEdges?.length ?? 0,
-                    groupLayouts: payload.groupLayouts?.length ?? 0,
-                    deletedNodeIds: payload.deletedNodeIds?.length ?? 0,
-                    deletedEdgeIds: payload.deletedEdgeIds?.length ?? 0,
-                    deletedGroupEdgeIds: payload.deletedGroupEdgeIds?.length ?? 0,
-                },
-                stateForSave: {
-                    nodeCount: stateForSave.nodes.length,
-                    edgeCount: stateForSave.edges.length,
-                    layoutSnapshotSize: layoutSnapshot.size,
-                    pendingPositionsSize: pendingNodePositionsRef.current.size,
-                },
-            });
-            const saved = await knowledgeMapsApi.saveGraph(mapId, payload);
-            const updatedTopics = await topicsApi.getAll().catch(() => topics);
-            setTopics(updatedTopics);
-            const tMap = new Map(updatedTopics.map((t) => [t.id, t]));
-            const nextState = initEditorState(saved, tMap);
-            updateEditorState(nextState);
-            const groupMeta = await nodesApi.getGroupGraph(mapId).catch(() => null);
-            let nextGroups = groups;
-            let nextOverrides = groupLayoutOverrides;
-            let nextGroupEdges = groupEdges;
-            if (groupMeta) {
-                nextGroups = groupMeta.groups ?? [];
-                nextOverrides = groupLayoutOverridesFromMeta(groupMeta);
-                nextGroupEdges = (groupMeta.groupEdges ?? []).map((e) => ({
-                    id: e.id,
-                    from: e.from,
-                    to: e.to,
-                    type: e.type,
-                }));
-                setGroups(nextGroups);
-                setGroupLayoutOverrides(nextOverrides);
-                setGroupEdges(nextGroupEdges);
-            }
-            saveSnapshotRef.current = buildEditorSaveSnapshot(
-                nextState,
-                nextGroupEdges,
-                mergeGroupLayouts(
-                    nextGroups.length > 0
-                        ? nextGroups
-                        : editorStateToGraphPayload(nextState, nextGroups, nextGroupEdges, tMap)
-                              .groups,
-                    nextOverrides,
-                ),
-            );
-            pendingNodePositionsRef.current.clear();
-            dirtyNodeIdsRef.current.clear();
-            dirtyEdgeKeysRef.current.clear();
-            setDeletedNodeIds([]);
-            setDeletedEdgeIds([]);
-            setDeletedGroupEdgeIds([]);
-            setDeletedGroupIds([]);
-            setDirty(false);
-            unsavedGroupIdsRef.current.clear();
-            setConnectSourceId(null);
-            setConnectSourceGroupId(null);
+            await persistEditorGraph();
             setStatusMsg('Збережено');
         } catch (e) {
             console.error(e);
@@ -446,14 +461,28 @@ export default function EditorPage() {
 
     const handlePublish = async () => {
         if (!mapId) return;
-        if (dirty && !window.confirm('Є незбережені зміни. Опублікувати без збереження?')) return;
         setPublishing(true);
+        setStatusMsg(null);
         try {
+            if (dirty) {
+                setSaving(true);
+                try {
+                    await persistEditorGraph();
+                } finally {
+                    setSaving(false);
+                }
+            }
             const updated = await knowledgeMapsApi.publish(mapId);
             setMap(updated);
-            setStatusMsg('Опубліковано');
+            setValidation(null);
+            setStatusMsg(
+                updated.graphValidated === false
+                    ? 'Опубліковано з позначкою «не валідовано»'
+                    : 'Опубліковано',
+            );
         } catch (e) {
-            setStatusMsg(parseApiError(e));
+            console.error(e);
+            setStatusMsg(`Помилка публікації: ${parseApiError(e)}`);
         } finally {
             setPublishing(false);
         }
@@ -1022,6 +1051,7 @@ export default function EditorPage() {
                         >
                             {map?.status ?? 'draft'}
                         </span>
+                        <MapGraphValidationBadge map={map} />
                         {dirty && <span className="badge badge-ghost badge-xs">не збережено</span>}
 
                         <div className="flex items-center gap-1 text-xs opacity-70">
@@ -1144,8 +1174,12 @@ export default function EditorPage() {
                         <button
                             type="button"
                             className="btn btn-primary btn-sm"
-                            onClick={handlePublish}
-                            disabled={publishing || map?.status === 'published'}
+                            onClick={() => void handlePublish()}
+                            disabled={
+                                publishing ||
+                                saving ||
+                                (map?.status === 'published' && !dirty)
+                            }
                         >
                             {publishing ? '...' : 'Опублікувати'}
                         </button>

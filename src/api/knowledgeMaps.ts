@@ -6,6 +6,7 @@ export interface KnowledgeMap {
     description: string | null;
     ownerUid: string | null;
     status: 'draft' | 'published';
+    graphValidated?: boolean | null;
     createdAt: string;
     updatedAt: string;
     publishedAt: string | null;

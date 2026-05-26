@@ -1,25 +1,48 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { knowledgeMapsApi, type KnowledgeMap } from '../api/knowledgeMaps';
+import MapGraphValidationBadge from '../components/MapGraphValidationBadge';
 import { useAuth } from '../context/AuthContext';
+import { apiErrorMessage } from '../utils/apiErrorMessage';
 
 export default function MapsPage() {
-    const { user, loading: authLoading } = useAuth();
+    const { user, loading: authLoading, token } = useAuth();
     const [maps, setMaps] = useState<KnowledgeMap[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        if (!user) {
+        if (authLoading) return;
+
+        if (!user || !token) {
+            setMaps([]);
             setLoading(false);
             return;
         }
+
+        let cancelled = false;
+        setLoading(true);
+        setError(null);
+
         knowledgeMapsApi
             .list()
-            .then(setMaps)
-            .catch((e) => setError(e.message))
-            .finally(() => setLoading(false));
-    }, [user]);
+            .then((data) => {
+                if (cancelled) return;
+                setMaps(data);
+                setError(null);
+            })
+            .catch((e) => {
+                if (cancelled) return;
+                setError(apiErrorMessage(e, 'Не вдалося завантажити карти'));
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [user, authLoading, token]);
 
     if (authLoading) {
         return <div className="p-8 text-center opacity-60">Завантаження...</div>;
@@ -74,7 +97,10 @@ function CatalogMapCard({ map }: { map: KnowledgeMap }) {
         <div className="glass-card p-5 flex flex-col gap-3 hover:border-primary/30 transition-colors">
             <div className="flex items-start justify-between gap-2">
                 <h2 className="font-display font-bold text-base leading-snug">{map.title}</h2>
-                <span className="badge badge-sm shrink-0 badge-success">published</span>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                    <span className="badge badge-sm badge-success">published</span>
+                    <MapGraphValidationBadge map={map} />
+                </div>
             </div>
 
             {map.description && (

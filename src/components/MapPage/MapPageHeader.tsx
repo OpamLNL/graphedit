@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { KnowledgeMap } from '../../api/knowledgeMaps';
+import MapGraphValidationBadge from '../MapGraphValidationBadge';
 import type { ProgressSummary } from '../../api/progress';
 import type { GraphViewScope } from '../Graph/Graph';
 import type { GroupData, NodeData } from '../Graph/Graph';
@@ -59,6 +60,7 @@ export default function MapPageHeader({
                             {mapMeta?.status === 'draft' && (
                                 <span className="badge badge-warning badge-sm">чернетка</span>
                             )}
+                            <MapGraphValidationBadge map={mapMeta} />
                         </div>
                         {mapMeta?.description && (
                             <p className="text-sm opacity-65 mt-1 max-w-2xl leading-relaxed">
