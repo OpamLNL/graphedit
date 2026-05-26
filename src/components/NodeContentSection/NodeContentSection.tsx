@@ -1,6 +1,33 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ClipboardEvent } from 'react';
 import { apiAssetUrl } from '../../api/client';
 import { nodesApi, type NodeContentResponse, type NodeMediaItem } from '../../api/nodes';
+
+const CLIPBOARD_IMAGE_TYPES = new Set([
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+]);
+
+function extractImageFromClipboard(data: DataTransfer): File | null {
+    for (const item of data.items) {
+        if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+        const file = item.getAsFile();
+        if (file && CLIPBOARD_IMAGE_TYPES.has(file.type)) {
+            return file;
+        }
+    }
+    const file = data.files[0];
+    if (file?.type.startsWith('image/') && CLIPBOARD_IMAGE_TYPES.has(file.type)) {
+        return file;
+    }
+    return null;
+}
+
+function clipboardImageFileName(file: File): string {
+    const ext = file.type.split('/')[1]?.replace('jpeg', 'jpg') ?? 'png';
+    return `paste-${Date.now()}.${ext}`;
+}
 
 interface NodeContentSectionProps {
     nodeId: number | null;
@@ -63,20 +90,35 @@ export default function NodeContentSection({
         }
     };
 
-    const handleUpload = async (file: File | null) => {
-        if (!savedNodeId || !file) return;
-        setUploading(true);
-        setError(null);
-        try {
-            const data = await nodesApi.uploadMedia(savedNodeId, file, caption);
-            setContent(data);
-            setCaption('');
-        } catch (e) {
-            setError(e instanceof Error ? e.message : 'Не вдалося завантажити зображення');
-        } finally {
-            setUploading(false);
-        }
-    };
+    const handleUpload = useCallback(
+        async (file: File | null) => {
+            if (!savedNodeId || !file) return;
+            setUploading(true);
+            setError(null);
+            try {
+                const data = await nodesApi.uploadMedia(savedNodeId, file, caption);
+                setContent(data);
+                setCaption('');
+            } catch (e) {
+                setError(e instanceof Error ? e.message : 'Не вдалося завантажити зображення');
+            } finally {
+                setUploading(false);
+            }
+        },
+        [savedNodeId, caption],
+    );
+
+    const handlePasteImage = useCallback(
+        (event: ClipboardEvent) => {
+            if (!editable || !savedNodeId || uploading) return;
+            const file = extractImageFromClipboard(event.clipboardData);
+            if (!file) return;
+            event.preventDefault();
+            const named = new File([file], clipboardImageFileName(file), { type: file.type });
+            void handleUpload(named);
+        },
+        [editable, savedNodeId, uploading, handleUpload],
+    );
 
     const handleDeleteMedia = async (mediaId: number) => {
         if (!savedNodeId) return;
@@ -118,6 +160,7 @@ export default function NodeContentSection({
                         placeholder="Текст теорії для цього вузла..."
                         value={theoryDraft}
                         onChange={(e) => setTheoryDraft(e.target.value)}
+                        onPaste={handlePasteImage}
                     />
                     <button
                         type="button"
@@ -137,7 +180,11 @@ export default function NodeContentSection({
             <p className="text-[10px] uppercase tracking-widest opacity-40 pt-1">Зображення</p>
 
             {editable && (
-                <div className="space-y-2">
+                <div
+                    className="space-y-2 rounded-lg border border-dashed border-base-content/15 p-2 outline-none focus-within:border-primary/40"
+                    tabIndex={0}
+                    onPaste={handlePasteImage}
+                >
                     <input
                         type="text"
                         className="input input-bordered input-xs w-full"
@@ -159,6 +206,9 @@ export default function NodeContentSection({
                             }}
                         />
                     </label>
+                    <p className="text-[10px] opacity-45 text-center">
+                        Або натисніть тут і вставте скріншот: Ctrl+V
+                    </p>
                 </div>
             )}
 

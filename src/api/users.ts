@@ -115,4 +115,16 @@ export const usersApi = {
             method: 'PATCH',
             body: JSON.stringify({ role }),
         }),
+
+    grantTeacherRole: (email: string) =>
+        apiFetch<{
+            id: number;
+            email: string;
+            name: string;
+            role: string;
+            message: string;
+        }>('/users/grant-teacher', {
+            method: 'POST',
+            body: JSON.stringify({ email }),
+        }),
 };

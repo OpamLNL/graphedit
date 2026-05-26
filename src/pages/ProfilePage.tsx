@@ -38,6 +38,9 @@ export default function ProfilePage() {
     const [error, setError] = useState<string | null>(null);
     const [avatarUploading, setAvatarUploading] = useState(false);
     const [avatarError, setAvatarError] = useState<string | null>(null);
+    const [grantEmail, setGrantEmail] = useState('');
+    const [grantLoading, setGrantLoading] = useState(false);
+    const [grantMessage, setGrantMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
     const isEditor = role === 'admin' || role === 'teacher';
     const displayName = cabinet?.user.name ?? profileName ?? user?.displayName ?? 'Користувач';
@@ -116,6 +119,25 @@ export default function ProfilePage() {
             setAvatarError(e instanceof Error ? e.message : 'Не вдалося скинути фото');
         } finally {
             setAvatarUploading(false);
+        }
+    };
+
+    const handleGrantTeacher = async () => {
+        const email = grantEmail.trim();
+        if (!email) return;
+        setGrantLoading(true);
+        setGrantMessage(null);
+        try {
+            const result = await usersApi.grantTeacherRole(email);
+            setGrantMessage({ type: 'success', text: `${result.message}: ${result.name} (${result.email})` });
+            setGrantEmail('');
+        } catch (e) {
+            setGrantMessage({
+                type: 'error',
+                text: e instanceof Error ? e.message : 'Не вдалося надати роль',
+            });
+        } finally {
+            setGrantLoading(false);
         }
     };
 
@@ -283,6 +305,42 @@ export default function ProfilePage() {
                     <p className="text-sm opacity-55 mb-4 -mt-2">
                         Статистика по опублікованих картах, які ви створили
                     </p>
+                </section>
+            )}
+
+            {isEditor && (
+                <section className="glass-card p-5 md:p-6 mb-8">
+                    <h2 className="font-display text-xl font-bold mb-1">Надати роль викладача</h2>
+                    <p className="text-sm opacity-55 mb-4">
+                        Введіть email користувача, який уже увійшов у систему. Йому буде надано доступ до редактора карт.
+                    </p>
+                    <div className="flex flex-col sm:flex-row gap-2 max-w-xl">
+                        <input
+                            type="email"
+                            className="input input-bordered input-sm flex-1"
+                            placeholder="email@example.com"
+                            value={grantEmail}
+                            onChange={(e) => setGrantEmail(e.target.value)}
+                            disabled={grantLoading}
+                        />
+                        <button
+                            type="button"
+                            className="btn btn-primary btn-sm shrink-0"
+                            onClick={() => void handleGrantTeacher()}
+                            disabled={grantLoading || !grantEmail.trim()}
+                        >
+                            {grantLoading ? 'Надання...' : 'Надати викладача'}
+                        </button>
+                    </div>
+                    {grantMessage && (
+                        <p
+                            className={`text-sm mt-3 ${
+                                grantMessage.type === 'success' ? 'text-success' : 'text-error'
+                            }`}
+                        >
+                            {grantMessage.text}
+                        </p>
+                    )}
                 </section>
             )}
 
