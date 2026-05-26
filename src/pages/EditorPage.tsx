@@ -309,7 +309,9 @@ export default function EditorPage() {
                 sortOrder: g.sortOrder,
             }));
 
-        if (payloadGroups.length === 0) return;
+        if (payloadGroups.length === 0) {
+            throw new Error('Групу не знайдено в редакторі — спробуйте ще раз');
+        }
 
         await knowledgeMapsApi.saveGraph(mapId, {
             nodes: [],
@@ -366,7 +368,7 @@ export default function EditorPage() {
                 deletedGroupEdgeIdsRef.current,
                 saveSnapshotRef.current,
                 dirtyNodeIdsRef.current,
-                deletedEdgeKeysRef.current,
+                dirtyEdgeKeysRef.current,
                 false,
                 deletedGroupIdsRef.current,
             );
@@ -603,6 +605,23 @@ export default function EditorPage() {
             const newTopics: Topic[] = [];
             const newNodes: EditorState['nodes'] = [];
 
+            setGroups((prev) => [...prev, newGroup]);
+            unsavedGroupIdsRef.current.add(newGroupId);
+            await knowledgeMapsApi.saveGraph(mapId, {
+                nodes: [],
+                edges: [],
+                groups: [
+                    {
+                        id: newGroup.id,
+                        title: newGroup.title,
+                        description: newGroup.description,
+                        level: newGroup.level,
+                        sortOrder: newGroup.sortOrder,
+                    },
+                ],
+            });
+            unsavedGroupIdsRef.current.delete(newGroupId);
+
             for (const sn of sourceNodes) {
                 const newId = allocateTempNodeId();
                 idMap.set(sn.id, newId);
@@ -631,22 +650,6 @@ export default function EditorPage() {
             }));
 
             setTopics((prev) => [...prev, ...newTopics]);
-            setGroups((prev) => [...prev, newGroup]);
-            unsavedGroupIdsRef.current.add(newGroupId);
-            await knowledgeMapsApi.saveGraph(mapId, {
-                nodes: [],
-                edges: [],
-                groups: [
-                    {
-                        id: newGroup.id,
-                        title: newGroup.title,
-                        description: newGroup.description,
-                        level: newGroup.level,
-                        sortOrder: newGroup.sortOrder,
-                    },
-                ],
-            });
-            unsavedGroupIdsRef.current.delete(newGroupId);
             updateEditorState((prev) =>
                 prev
                     ? {
