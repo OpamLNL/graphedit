@@ -148,7 +148,8 @@ export default function MyMapsPage() {
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {maps.map((map) => {
                         const isOwner =
-                            isEditor && (!map.ownerUid || map.ownerUid === user.uid);
+                            isEditor &&
+                            (role === 'admin' || !map.ownerUid || map.ownerUid === user.uid);
                         return (
                             <MapCard
                                 key={map.id}
@@ -275,7 +276,10 @@ function MapCard({
                         type="button"
                         className="btn btn-error btn-outline btn-sm shrink-0"
                         disabled={deleting}
-                        onClick={onDelete}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onDelete();
+                        }}
                         title="Видалити карту"
                     >
                         {deleting ? '...' : '×'}

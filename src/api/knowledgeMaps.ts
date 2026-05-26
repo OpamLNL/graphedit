@@ -35,10 +35,24 @@ export interface EditorGraphResponse {
     edges: EditorGraphEdge[];
 }
 
+export interface GraphValidationNodeIssue {
+    nodeId: number;
+    nodeTitle: string;
+    problems: string[];
+}
+
+export interface GraphValidationGroupBucket {
+    groupId: string | null;
+    groupTitle: string;
+    nodes: GraphValidationNodeIssue[];
+}
+
 export interface GraphValidationResult {
     valid: boolean;
     errors: string[];
     warnings: string[];
+    globalIssues: string[];
+    groups: GraphValidationGroupBucket[];
 }
 
 export interface BulkSavePayload {

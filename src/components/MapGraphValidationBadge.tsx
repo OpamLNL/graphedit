@@ -1,9 +1,10 @@
 import type { KnowledgeMap } from '../api/knowledgeMaps';
+import { isMapGraphNotValidated } from '../utils/mapValidation';
 
 type MapLike = Pick<KnowledgeMap, 'status' | 'graphValidated'>;
 
 export default function MapGraphValidationBadge({ map }: { map: MapLike | null | undefined }) {
-    if (!map || map.status !== 'published' || map.graphValidated !== false) {
+    if (!map || map.status !== 'published' || !isMapGraphNotValidated(map.graphValidated)) {
         return null;
     }
 

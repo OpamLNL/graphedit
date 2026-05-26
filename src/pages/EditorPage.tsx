@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction 
 import { Link, Navigate, useParams } from 'react-router-dom';
 import NodeEditorPanel from '../components/FlowEditor/NodeEditorPanel';
 import EditorLibraryPanel from '../components/FlowEditor/EditorLibraryPanel';
+import EditorValidationPanel from '../components/FlowEditor/EditorValidationPanel';
 import Graph, {
     type GraphPayload,
     type GraphViewScope,
@@ -44,6 +45,7 @@ import { topicsApi, type Topic } from '../api/topics';
 import { ApiError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import MapGraphValidationBadge from '../components/MapGraphValidationBadge';
+import { isMapGraphNotValidated } from '../utils/mapValidation';
 
 function groupLayoutOverridesFromMeta(
     groupMeta: GroupGraphResponse | null | undefined,
@@ -116,6 +118,7 @@ export default function EditorPage() {
     const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
     const [connectMode, setConnectMode] = useState(false);
     const [showRightPanel, setShowRightPanel] = useState(true);
+    const [rightPanelTab, setRightPanelTab] = useState<'properties' | 'validation'>('properties');
     const [groupLayoutOverrides, setGroupLayoutOverrides] = useState<
         Record<string, { x: number; y: number }>
     >({});
@@ -336,6 +339,34 @@ export default function EditorPage() {
         }
     };
 
+    const handleValidationNodeClick = (nodeId: number, groupId: string | null) => {
+        if (groupId) {
+            setSelectedGroupId(groupId);
+            setViewScope('topics');
+        }
+        setActiveNodeId(nodeId);
+        setRightPanelTab('properties');
+        setShowRightPanel(true);
+    };
+
+    const showValidationSidePanel = rightPanelTab === 'validation' && validation != null;
+    const showPropertiesContent =
+        rightPanelTab === 'properties' &&
+        (viewScope === 'topics' || (viewScope === 'groups' && activeGroup));
+    /** Тримаємо aside змонтованим після валідації, щоб ширина графа не стрибала */
+    const canShowRightAside =
+        showValidationSidePanel ||
+        showPropertiesContent ||
+        (validation != null && rightPanelTab === 'properties');
+    const showRightAside = showRightPanel && canShowRightAside;
+
+    const rightPanelLabel =
+        rightPanelTab === 'validation'
+            ? 'Валідація'
+            : viewScope === 'groups'
+              ? 'Група'
+              : 'Властивості';
+
     const handleValidate = async () => {
         if (!mapId) return;
         setValidating(true);
@@ -343,7 +374,15 @@ export default function EditorPage() {
         try {
             const result = await knowledgeMapsApi.validate(mapId);
             setValidation(result);
-            setStatusMsg(result.valid ? 'Граф валідний ✓' : `Помилки: ${result.errors.length}`);
+            setShowRightPanel(true);
+            setRightPanelTab('validation');
+            setStatusMsg(
+                result.valid
+                    ? result.warnings.length > 0
+                        ? `Застережень: ${result.warnings.length}`
+                        : 'Граф валідний ✓'
+                    : `Граф невалідний · ${result.errors.length} помилок`,
+            );
         } catch (e) {
             setStatusMsg(parseApiError(e));
         } finally {
@@ -476,7 +515,7 @@ export default function EditorPage() {
             setMap(updated);
             setValidation(null);
             setStatusMsg(
-                updated.graphValidated === false
+                isMapGraphNotValidated(updated.graphValidated)
                     ? 'Опубліковано з позначкою «не валідовано»'
                     : 'Опубліковано',
             );
@@ -1079,10 +1118,18 @@ export default function EditorPage() {
                             <span><strong className="text-accent">{edgeCount}</strong> ребер тем</span>
                             <span><strong className="text-secondary">{groupEdgeCount}</strong> ребер груп</span>
                             {validation && (
-                                <span className={`badge badge-xs ${validation.valid ? 'badge-success' : 'badge-error'}`}>
+                                <span
+                                    className={`badge badge-xs ${
+                                        validation.valid
+                                            ? validation.warnings.length > 0
+                                                ? 'badge-warning'
+                                                : 'badge-success'
+                                            : 'badge-error'
+                                    }`}
+                                >
                                     {validation.valid
                                         ? validation.warnings.length > 0
-                                            ? `OK · ${validation.warnings.length} застер.`
+                                            ? `${validation.warnings.length} застер.`
                                             : 'OK ✓'
                                         : `${validation.errors.length} помилок`}
                                 </span>
@@ -1157,11 +1204,20 @@ export default function EditorPage() {
                         <Link to={`/map/${mapId}`} className="btn btn-ghost btn-sm">Перегляд</Link>
                         <button
                             type="button"
-                            className="btn btn-outline btn-sm"
-                            onClick={handleValidate}
+                            className={`btn btn-outline btn-sm ${validation && rightPanelTab === 'validation' && showRightPanel ? 'btn-active' : ''}`}
+                            onClick={() => {
+                                if (validation) {
+                                    setShowRightPanel(true);
+                                    setRightPanelTab('validation');
+                                } else {
+                                    void handleValidate();
+                                }
+                            }}
                             disabled={validating}
                         >
-                            {validating ? '...' : 'Валідувати'}
+                            {validating ? '...' : validation && !validation.valid
+                                ? `Валідація (${validation.errors.length})`
+                                : 'Валідувати'}
                         </button>
                         <button
                             type="button"
@@ -1225,20 +1281,6 @@ export default function EditorPage() {
                         {statusMsg}
                     </p>
                 )}
-                {validation && validation.warnings.length > 0 && (
-                    <ul className="text-xs text-warning max-w-3xl mx-auto space-y-0.5">
-                        {validation.warnings.slice(0, 3).map((warn) => (
-                            <li key={warn}>⚠ {warn}</li>
-                        ))}
-                    </ul>
-                )}
-                {validation && !validation.valid && (
-                    <ul className="text-xs text-error max-w-3xl mx-auto space-y-0.5">
-                        {validation.errors.slice(0, 5).map((err) => (
-                            <li key={err}>• {err}</li>
-                        ))}
-                    </ul>
-                )}
             </div>
 
             <div className="flex flex-1 overflow-hidden relative">
@@ -1279,100 +1321,116 @@ export default function EditorPage() {
                     )}
                 </div>
 
-                {showRightPanel && viewScope === 'groups' && activeGroup && (
+                {showRightAside && (
                     <aside className="w-80 shrink-0 border-l border-base-content/10 bg-base-100/50 flex flex-col max-h-full">
-                        <div className="p-3 border-b border-base-content/5 flex justify-between items-center">
-                            <p className="text-[10px] uppercase tracking-widest opacity-40 font-display font-semibold">
-                                Група
-                            </p>
+                        <div className="p-3 border-b border-base-content/5 flex justify-between items-center gap-2">
+                            {validation ? (
+                                <div className="flex gap-1 flex-1 min-w-0">
+                                    <button
+                                        type="button"
+                                        className={`btn btn-xs flex-1 ${rightPanelTab === 'properties' ? 'btn-secondary' : 'btn-ghost'}`}
+                                        onClick={() => setRightPanelTab('properties')}
+                                    >
+                                        {viewScope === 'groups' ? 'Група' : 'Властивості'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`btn btn-xs flex-1 ${rightPanelTab === 'validation' ? 'btn-secondary' : 'btn-ghost'} ${!validation.valid ? 'text-error' : ''}`}
+                                        onClick={() => setRightPanelTab('validation')}
+                                    >
+                                        Валідація
+                                        {!validation.valid && (
+                                            <span className="ml-1 opacity-70">
+                                                ({validation.errors.length})
+                                            </span>
+                                        )}
+                                    </button>
+                                </div>
+                            ) : (
+                                <p className="text-[10px] uppercase tracking-widest opacity-40 font-display font-semibold">
+                                    {rightPanelLabel}
+                                </p>
+                            )}
                             <button
                                 type="button"
-                                className="btn btn-ghost btn-xs"
+                                className="btn btn-ghost btn-xs shrink-0"
                                 onClick={() => setShowRightPanel(false)}
                             >
                                 ×
                             </button>
                         </div>
-                        <div className="p-4 space-y-3 flex-1 overflow-y-auto">
-                            <label className="form-control w-full">
-                                <span className="label-text text-xs opacity-60">Назва</span>
-                                <input
-                                    type="text"
-                                    className="input input-sm input-bordered w-full"
-                                    value={activeGroup.title}
-                                    onChange={(e) => handleGroupPatch({ title: e.target.value })}
-                                />
-                            </label>
-                            <label className="form-control w-full">
-                                <span className="label-text text-xs opacity-60">Опис</span>
-                                <textarea
-                                    className="textarea textarea-sm textarea-bordered w-full min-h-[80px]"
-                                    value={activeGroup.description ?? ''}
-                                    onChange={(e) =>
-                                        handleGroupPatch({
-                                            description: e.target.value || null,
-                                        })
-                                    }
-                                />
-                            </label>
-                            <p className="text-xs opacity-50">
-                                {activeGroup.topicCount} вузлів у групі
-                            </p>
-                            <button
-                                type="button"
-                                className="btn btn-secondary btn-sm w-full"
-                                onClick={() => handleOpenGroup(activeGroup.id)}
-                            >
-                                Деталізація →
-                            </button>
-                            <button
-                                type="button"
-                                className="btn btn-error btn-outline btn-sm w-full"
-                                onClick={handleDeleteGroup}
-                            >
-                                Видалити групу
-                            </button>
-                        </div>
+
+                        {showValidationSidePanel ? (
+                            <EditorValidationPanel
+                                validation={validation}
+                                onNodeClick={handleValidationNodeClick}
+                            />
+                        ) : viewScope === 'groups' && activeGroup ? (
+                            <div className="p-4 space-y-3 flex-1 overflow-y-auto">
+                                <label className="form-control w-full">
+                                    <span className="label-text text-xs opacity-60">Назва</span>
+                                    <input
+                                        type="text"
+                                        className="input input-sm input-bordered w-full"
+                                        value={activeGroup.title}
+                                        onChange={(e) => handleGroupPatch({ title: e.target.value })}
+                                    />
+                                </label>
+                                <label className="form-control w-full">
+                                    <span className="label-text text-xs opacity-60">Опис</span>
+                                    <textarea
+                                        className="textarea textarea-sm textarea-bordered w-full min-h-[80px]"
+                                        value={activeGroup.description ?? ''}
+                                        onChange={(e) =>
+                                            handleGroupPatch({
+                                                description: e.target.value || null,
+                                            })
+                                        }
+                                    />
+                                </label>
+                                <p className="text-xs opacity-50">
+                                    {activeGroup.topicCount} вузлів у групі
+                                </p>
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm w-full"
+                                    onClick={() => handleOpenGroup(activeGroup.id)}
+                                >
+                                    Деталізація →
+                                </button>
+                                <button
+                                    type="button"
+                                    className="btn btn-error btn-outline btn-sm w-full"
+                                    onClick={handleDeleteGroup}
+                                >
+                                    Видалити групу
+                                </button>
+                            </div>
+                        ) : viewScope === 'groups' ? (
+                            <div className="p-4 flex-1 flex items-center justify-center">
+                                <p className="text-xs opacity-50 text-center">
+                                    Оберіть групу на карті, щоб редагувати властивості.
+                                </p>
+                            </div>
+                        ) : viewScope === 'topics' ? (
+                            <NodeEditorPanel
+                                node={activeNode}
+                                nodeKey={activeNodeId}
+                                topics={topics}
+                                onChange={handleNodePatch}
+                                onDelete={handleDeleteActiveNode}
+                            />
+                        ) : null}
                     </aside>
                 )}
 
-                {!showRightPanel && viewScope === 'groups' && activeGroup && (
+                {!showRightPanel && canShowRightAside && (
                     <button
                         type="button"
                         className="absolute right-2 top-2 btn btn-xs btn-ghost bg-base-100/90 z-10"
                         onClick={() => setShowRightPanel(true)}
                     >
-                        ← Група
-                    </button>
-                )}
-
-                {showRightPanel && viewScope === 'topics' && (
-                    <aside className="w-80 shrink-0 border-l border-base-content/10 bg-base-100/50 flex flex-col max-h-full">
-                        <div className="p-3 border-b border-base-content/5 flex justify-between items-center">
-                            <p className="text-[10px] uppercase tracking-widest opacity-40 font-display font-semibold">
-                                Властивості
-                            </p>
-                            <button type="button" className="btn btn-ghost btn-xs" onClick={() => setShowRightPanel(false)}>
-                                ×
-                            </button>
-                        </div>
-                        <NodeEditorPanel
-                            node={activeNode}
-                            nodeKey={activeNodeId}
-                            topics={topics}
-                            onChange={handleNodePatch}
-                            onDelete={handleDeleteActiveNode}
-                        />
-                    </aside>
-                )}
-
-                {!showRightPanel && viewScope === 'topics' && (
-                    <button
-                        type="button"
-                        className="absolute right-2 top-2 btn btn-xs btn-ghost bg-base-100/90 z-10"
-                        onClick={() => setShowRightPanel(true)}
-                    >
-                        ← Властивості
+                        ← {rightPanelLabel}
                     </button>
                 )}
             </div>
