@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { knowledgeMapsApi, type KnowledgeMap } from '../api/knowledgeMaps';
 import { useAuth } from '../context/AuthContext';
 
@@ -107,7 +107,10 @@ export default function MyMapsPage() {
                         <MapCard
                             key={map.id}
                             map={map}
-                            canEdit={isEditor && map.ownerUid === user.uid}
+                            canEdit={
+                                isEditor &&
+                                (!map.ownerUid || map.ownerUid === user.uid)
+                            }
                         />
                     ))}
                 </div>
@@ -159,10 +162,16 @@ export default function MyMapsPage() {
 }
 
 function MapCard({ map, canEdit }: { map: KnowledgeMap; canEdit: boolean }) {
+    const navigate = useNavigate();
     const updated = new Date(map.updatedAt).toLocaleDateString('uk-UA');
+    const canView = map.status === 'published';
+    const cardHref = canView ? `/map/${map.id}` : canEdit ? `/editor/${map.id}` : `/map/${map.id}`;
 
     return (
-        <div className="glass-card p-5 flex flex-col gap-3 hover:border-primary/30 transition-colors">
+        <Link
+            to={cardHref}
+            className="glass-card p-5 flex flex-col gap-3 hover:border-primary/30 transition-colors no-underline text-base-content cursor-pointer"
+        >
             <div className="flex items-start justify-between gap-2">
                 <h2 className="font-display font-bold text-base leading-snug">{map.title}</h2>
                 <span
@@ -181,17 +190,30 @@ function MapCard({ map, canEdit }: { map: KnowledgeMap; canEdit: boolean }) {
             <p className="text-[10px] opacity-40">Оновлено {updated}</p>
 
             <div className="flex gap-2 mt-auto pt-2">
-                {(map.status === 'published' || canEdit) && (
-                    <Link to={`/map/${map.id}`} className="btn btn-outline btn-sm flex-1">
+                {canView && (
+                    <span className="btn btn-outline btn-sm flex-1 pointer-events-none">
                         Переглянути
-                    </Link>
+                    </span>
                 )}
                 {canEdit && (
-                    <Link to={`/editor/${map.id}`} className="btn btn-primary btn-sm flex-1">
-                        Редагувати
-                    </Link>
+                    <button
+                        type="button"
+                        className="btn btn-primary btn-sm flex-1"
+                        onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            navigate(`/editor/${map.id}`);
+                        }}
+                    >
+                        {canView ? 'Редагувати' : 'Відкрити редактор'}
+                    </button>
+                )}
+                {!canView && !canEdit && (
+                    <span className="btn btn-primary btn-sm flex-1 pointer-events-none">
+                        Відкрити
+                    </span>
                 )}
             </div>
-        </div>
+        </Link>
     );
 }
