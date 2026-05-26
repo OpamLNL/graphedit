@@ -117,7 +117,11 @@ export interface ImportLibraryResponse {
 }
 
 export const knowledgeMapsApi = {
+    /** Каталог: усі опубліковані карти */
     list: () => apiFetch<KnowledgeMap[]>('/knowledge-maps'),
+
+    /** Мої карти: створені + з прогресом проходження */
+    listMine: () => apiFetch<KnowledgeMap[]>('/knowledge-maps/mine'),
 
     getOne: (id: number) => apiFetch<KnowledgeMap>(`/knowledge-maps/${id}`),
 

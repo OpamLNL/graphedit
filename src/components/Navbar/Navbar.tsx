@@ -100,11 +100,9 @@ export default function Navbar() {
 
                         {user ? (
                             <>
-                                {isEditor && (
-                                    <Link to="/maps" className="btn btn-primary btn-sm hidden sm:flex gap-1">
-                                        ✏️ Мої карти
-                                    </Link>
-                                )}
+                                <Link to="/my-maps" className="btn btn-primary btn-sm hidden sm:flex gap-1">
+                                    🗺️ Мої карти
+                                </Link>
                                 <Link to="/profile" className="hidden md:flex items-center gap-2 pl-1 hover:opacity-90 transition-opacity">
                                     {(avatarUrl ?? user.photoURL) && (
                                         <img

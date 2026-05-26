@@ -4,6 +4,7 @@ import Navbar from './components/Navbar/Navbar.tsx';
 import Home from './pages/Home';
 import Map from './pages/MapPage.tsx';
 import MapsPage from './pages/MapsPage';
+import MyMapsPage from './pages/MyMapsPage';
 import EditorPage from './pages/EditorPage';
 import Topics from './pages/Topics';
 import About from './pages/About';
@@ -20,6 +21,7 @@ function App() {
                 <Routes>
                     <Route path="/" element={<Home />} />
                     <Route path="/maps" element={<MapsPage />} />
+                    <Route path="/my-maps" element={<MyMapsPage />} />
                     <Route path="/map/:mapId" element={<Map />} />
                     <Route path="/map" element={<Navigate to="/maps" replace />} />
                     <Route path="/editor/:mapId" element={<EditorPage />} />

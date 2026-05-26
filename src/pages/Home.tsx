@@ -56,7 +56,6 @@ export default function Home() {
     const [loginLoading, setLoginLoading] = useState(false);
 
     const landingClass = theme === 'dark' ? 'landing-dark' : 'landing-light';
-    const isEditor = role === 'admin' || role === 'teacher';
 
     const handleGoogleLogin = async () => {
         setLoginLoading(true);
@@ -100,7 +99,7 @@ export default function Home() {
                         <div className="flex flex-wrap gap-3">
                             {user ? (
                                 <Link to="/maps" className="btn btn-primary btn-lg gap-2 shadow-lg shadow-primary/25">
-                                    {isEditor ? '✏️ Мої карти' : '🗺️ Обрати карту'}
+                                    🗺️ Карти
                                 </Link>
                             ) : (
                                 <button
@@ -230,7 +229,7 @@ export default function Home() {
                         </button>
                     ) : (
                         <Link to="/maps" className="btn btn-primary btn-lg">
-                            {isEditor ? 'До моїх карт →' : 'Обрати карту →'}
+                            До каталогу карт →
                         </Link>
                     )}
                 </div>

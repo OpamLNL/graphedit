@@ -254,11 +254,11 @@ export default function ProfilePage() {
                     </div>
 
                     <div className="flex flex-col gap-2 w-full sm:w-auto">
-                        <Link to="/maps" className="btn btn-primary btn-sm">
-                            {isEditor ? 'Мої карти' : 'До карт знань'}
+                        <Link to="/my-maps" className="btn btn-primary btn-sm">
+                            Мої карти
                         </Link>
                         {isEditor && (
-                            <Link to="/maps" className="btn btn-outline btn-sm">
+                            <Link to="/my-maps" className="btn btn-outline btn-sm">
                                 + Нова карта
                             </Link>
                         )}
@@ -299,8 +299,8 @@ export default function ProfilePage() {
                 {maps.length === 0 ? (
                     <div className="glass-card p-10 text-center opacity-60">
                         {isEditor
-                            ? 'Ще немає створених карт. Створіть першу на сторінці «Карти».'
-                            : 'Немає доступних опублікованих карт.'}
+                            ? 'Ще немає створених карт. Створіть першу на сторінці «Мої карти».'
+                            : 'Немає карт з прогресом. Оберіть карту з каталогу «Карти».'}
                     </div>
                 ) : (
                     <div className="grid sm:grid-cols-2 gap-4">
