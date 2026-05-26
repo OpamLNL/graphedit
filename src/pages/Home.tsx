@@ -51,7 +51,7 @@ const STEPS = [
 ];
 
 export default function Home() {
-    const { user, role } = useAuth();
+    const { user, role, profileName } = useAuth();
     const { theme } = useTheme();
     const [loginLoading, setLoginLoading] = useState(false);
 
@@ -119,7 +119,7 @@ export default function Home() {
                         {user && (
                             <p className="mt-4 text-sm opacity-50">
                                 Увійшов як <span className="font-semibold capitalize">{role}</span>
-                                {' · '}{user.displayName || user.email}
+                                {' · '}{profileName ?? user.displayName ?? 'користувач'}
                             </p>
                         )}
                     </div>

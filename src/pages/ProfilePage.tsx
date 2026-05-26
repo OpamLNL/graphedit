@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { usersApi, type CabinetData } from '../api/users';
+import { apiAssetUrl } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { loadStoredNavigation, navigationStorageKey } from '../utils/graphNavigationStorage';
 
@@ -31,14 +32,26 @@ function formatDateTime(value: string | null | undefined): string {
 }
 
 export default function ProfilePage() {
-    const { user, role, loading: authLoading } = useAuth();
+    const { user, role, loading: authLoading, avatarUrl: authAvatarUrl, refreshProfile, profileName } = useAuth();
     const [cabinet, setCabinet] = useState<CabinetData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [avatarUploading, setAvatarUploading] = useState(false);
+    const [avatarError, setAvatarError] = useState<string | null>(null);
 
     const isEditor = role === 'admin' || role === 'teacher';
-    const avatarUrl = user?.photoURL ?? cabinet?.user.avatarUrl ?? null;
-    const displayName = cabinet?.user.name ?? user?.displayName ?? 'Користувач';
+    const displayName = cabinet?.user.name ?? profileName ?? user?.displayName ?? 'Користувач';
+
+    const resolveProfileAvatar = (cabinetAvatar: string | null | undefined) => {
+        const url = cabinetAvatar ?? authAvatarUrl ?? user?.photoURL ?? null;
+        if (!url) return null;
+        if (url.startsWith('/api/')) return apiAssetUrl(url);
+        return url;
+    };
+
+    const avatarUrl = resolveProfileAvatar(cabinet?.user.avatarUrl);
+    const hasCustomAvatar =
+        !!cabinet?.user.avatarUrl?.startsWith('/api/uploads/avatars/');
 
     useEffect(() => {
         if (!user) {
@@ -72,6 +85,39 @@ export default function ProfilePage() {
     }
 
     if (!cabinet) return null;
+
+    const handleAvatarSelect = async (file: File | null) => {
+        if (!file) return;
+        setAvatarUploading(true);
+        setAvatarError(null);
+        try {
+            const updated = await usersApi.uploadAvatar(file);
+            setCabinet((prev) =>
+                prev ? { ...prev, user: { ...prev.user, avatarUrl: updated.avatarUrl } } : prev,
+            );
+            await refreshProfile();
+        } catch (e) {
+            setAvatarError(e instanceof Error ? e.message : 'Не вдалося завантажити фото');
+        } finally {
+            setAvatarUploading(false);
+        }
+    };
+
+    const handleAvatarReset = async () => {
+        setAvatarUploading(true);
+        setAvatarError(null);
+        try {
+            const updated = await usersApi.removeAvatar();
+            setCabinet((prev) =>
+                prev ? { ...prev, user: { ...prev.user, avatarUrl: updated.avatarUrl } } : prev,
+            );
+            await refreshProfile();
+        } catch (e) {
+            setAvatarError(e instanceof Error ? e.message : 'Не вдалося скинути фото');
+        } finally {
+            setAvatarUploading(false);
+        }
+    };
 
     const { stats, maps, recentCompleted, teachingStats } = cabinet;
     const profileRole = cabinet.user.role ?? role ?? 'student';
@@ -128,7 +174,7 @@ export default function ProfilePage() {
         <div className="max-w-5xl mx-auto px-4 py-10">
             <section className="glass-card p-6 md:p-8 mb-8">
                 <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6">
-                    <div className="avatar shrink-0">
+                    <div className="avatar shrink-0 relative group">
                         <div className="w-24 h-24 rounded-full ring-4 ring-primary/25 overflow-hidden bg-base-200">
                             {avatarUrl ? (
                                 <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
@@ -137,7 +183,31 @@ export default function ProfilePage() {
                                     {displayName.charAt(0).toUpperCase()}
                                 </div>
                             )}
+                            {avatarUploading && (
+                                <div className="absolute inset-0 bg-base-300/70 flex items-center justify-center">
+                                    <span className="loading loading-spinner loading-sm text-primary" />
+                                </div>
+                            )}
                         </div>
+                        <label
+                            className={`absolute inset-0 flex items-center justify-center rounded-full bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer ${
+                                avatarUploading ? 'pointer-events-none' : ''
+                            }`}
+                            title="Змінити фото"
+                        >
+                            <span className="text-white text-xs font-medium">📷</span>
+                            <input
+                                type="file"
+                                accept="image/jpeg,image/png,image/gif,image/webp"
+                                className="hidden"
+                                disabled={avatarUploading}
+                                onChange={(e) => {
+                                    const file = e.target.files?.[0] ?? null;
+                                    void handleAvatarSelect(file);
+                                    e.target.value = '';
+                                }}
+                            />
+                        </label>
                     </div>
 
                     <div className="flex-1 text-center sm:text-left min-w-0">
@@ -152,6 +222,35 @@ export default function ProfilePage() {
                                 У системі з {formatDate(cabinet.user.createdAt)}
                             </span>
                         </div>
+                        <div className="flex flex-wrap justify-center sm:justify-start gap-2 mt-3">
+                            <label className={`btn btn-outline btn-xs ${avatarUploading ? 'btn-disabled' : ''}`}>
+                                Змінити фото
+                                <input
+                                    type="file"
+                                    accept="image/jpeg,image/png,image/gif,image/webp"
+                                    className="hidden"
+                                    disabled={avatarUploading}
+                                    onChange={(e) => {
+                                        const file = e.target.files?.[0] ?? null;
+                                        void handleAvatarSelect(file);
+                                        e.target.value = '';
+                                    }}
+                                />
+                            </label>
+                            {hasCustomAvatar && (
+                                <button
+                                    type="button"
+                                    className="btn btn-ghost btn-xs"
+                                    disabled={avatarUploading}
+                                    onClick={() => void handleAvatarReset()}
+                                >
+                                    Скинути фото
+                                </button>
+                            )}
+                        </div>
+                        {avatarError && (
+                            <p className="text-xs text-error mt-2">{avatarError}</p>
+                        )}
                     </div>
 
                     <div className="flex flex-col gap-2 w-full sm:w-auto">
@@ -210,7 +309,7 @@ export default function ProfilePage() {
                                 key={map.id}
                                 map={map}
                                 isEditor={isEditor}
-                                isOwner={map.ownerUid === user.uid}
+                                isOwner={!map.ownerUid || map.ownerUid === user.uid}
                             />
                         ))}
                     </div>

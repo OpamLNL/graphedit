@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import NodeEditorPanel from '../components/FlowEditor/NodeEditorPanel';
+import EditorLibraryPanel from '../components/FlowEditor/EditorLibraryPanel';
 import Graph, {
     type GraphPayload,
     type GraphViewScope,
@@ -9,6 +10,7 @@ import Graph, {
 import {
     allocateTempEdgeId,
     allocateTempNodeId,
+    allocateGroupId,
     autoLayoutEditorGroup,
     applyPendingNodePositions,
     applyLayoutSnapshot,
@@ -33,6 +35,8 @@ import type { GroupGraphResponse } from '../api/nodes';
 import {
     knowledgeMapsApi,
     type GraphValidationResult,
+    type ImportLibraryGroup,
+    type ImportLibraryNode,
     type KnowledgeMap,
 } from '../api/knowledgeMaps';
 import { nodesApi } from '../api/nodes';
@@ -93,6 +97,8 @@ export default function EditorPage() {
     const [deletedNodeIds, setDeletedNodeIds] = useState<number[]>([]);
     const [deletedEdgeIds, setDeletedEdgeIds] = useState<number[]>([]);
     const [deletedGroupEdgeIds, setDeletedGroupEdgeIds] = useState<number[]>([]);
+    const [deletedGroupIds, setDeletedGroupIds] = useState<string[]>([]);
+    const [showLibraryPanel, setShowLibraryPanel] = useState(false);
     const [statusMsg, setStatusMsg] = useState<string | null>(null);
     const [viewScope, setViewScope] = useState<GraphViewScope>('groups');
     const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -108,9 +114,11 @@ export default function EditorPage() {
     const deletedNodeIdsRef = useRef<number[]>([]);
     const deletedEdgeIdsRef = useRef<number[]>([]);
     const deletedGroupEdgeIdsRef = useRef<number[]>([]);
+    const deletedGroupIdsRef = useRef<string[]>([]);
     const pendingNodePositionsRef = useRef<Map<number, { x: number; y: number }>>(new Map());
     const dirtyNodeIdsRef = useRef<Set<number>>(new Set());
     const dirtyEdgeKeysRef = useRef<Set<string>>(new Set());
+    const unsavedGroupIdsRef = useRef<Set<string>>(new Set());
     const navReadyRef = useRef(false);
 
     const updateEditorState = useCallback((updater: SetStateAction<EditorState | null>) => {
@@ -132,6 +140,7 @@ export default function EditorPage() {
     deletedNodeIdsRef.current = deletedNodeIds;
     deletedEdgeIdsRef.current = deletedEdgeIds;
     deletedGroupEdgeIdsRef.current = deletedGroupEdgeIds;
+    deletedGroupIdsRef.current = deletedGroupIds;
 
     useEffect(() => {
         if (authLoading || !user || !mapId || Number.isNaN(mapId)) {
@@ -186,7 +195,9 @@ export default function EditorPage() {
                 setDeletedNodeIds([]);
                 setDeletedEdgeIds([]);
                 setDeletedGroupEdgeIds([]);
+                setDeletedGroupIds([]);
                 setDirty(false);
+                unsavedGroupIdsRef.current.clear();
                 setValidation(null);
                 setConnectMode(false);
                 setConnectSourceId(null);
@@ -283,6 +294,34 @@ export default function EditorPage() {
 
     const markDirty = useCallback(() => setDirty(true), []);
 
+    const ensureGroupsPersisted = async (groupIds: string[]) => {
+        if (!mapId) return;
+        const pendingIds = groupIds.filter((id) => unsavedGroupIdsRef.current.has(id));
+        if (pendingIds.length === 0) return;
+
+        const payloadGroups = groups
+            .filter((g) => pendingIds.includes(g.id))
+            .map((g) => ({
+                id: g.id,
+                title: g.title,
+                description: g.description,
+                level: g.level,
+                sortOrder: g.sortOrder,
+            }));
+
+        if (payloadGroups.length === 0) return;
+
+        await knowledgeMapsApi.saveGraph(mapId, {
+            nodes: [],
+            edges: [],
+            groups: payloadGroups,
+        });
+
+        for (const id of pendingIds) {
+            unsavedGroupIdsRef.current.delete(id);
+        }
+    };
+
     const handleValidate = async () => {
         if (!mapId) return;
         setValidating(true);
@@ -327,8 +366,9 @@ export default function EditorPage() {
                 deletedGroupEdgeIdsRef.current,
                 saveSnapshotRef.current,
                 dirtyNodeIdsRef.current,
-                dirtyEdgeKeysRef.current,
+                deletedEdgeKeysRef.current,
                 false,
+                deletedGroupIdsRef.current,
             );
             console.log('[Editor save] PATCH /knowledge-maps/' + mapId + '/graph', {
                 payload,
@@ -388,7 +428,9 @@ export default function EditorPage() {
             setDeletedNodeIds([]);
             setDeletedEdgeIds([]);
             setDeletedGroupEdgeIds([]);
+            setDeletedGroupIds([]);
             setDirty(false);
+            unsavedGroupIdsRef.current.clear();
             setConnectSourceId(null);
             setConnectSourceGroupId(null);
             setStatusMsg('Збережено');
@@ -442,6 +484,239 @@ export default function EditorPage() {
         setConnectSourceId(null);
         setConnectSourceGroupId(null);
         setConnectMode(false);
+    };
+
+    const handleAddGroup = () => {
+        const id = allocateGroupId();
+        const maxOrder = groups.reduce((max, g) => Math.max(max, g.sortOrder), 0);
+        const newGroup: GroupData = {
+            id,
+            title: 'Нова група',
+            description: null,
+            level: 0,
+            sortOrder: maxOrder + 1,
+            topicCount: 0,
+            completedCount: 0,
+            availableCount: 0,
+            progressPercent: 0,
+        };
+        setGroups((prev) => [...prev, newGroup]);
+        unsavedGroupIdsRef.current.add(id);
+        setActiveGroupId(id);
+        markDirty();
+    };
+
+    const handleGroupPatch = (patch: { title?: string; description?: string | null }) => {
+        if (!activeGroupId) return;
+        setGroups((prev) =>
+            prev.map((g) =>
+                g.id === activeGroupId
+                    ? {
+                          ...g,
+                          ...(patch.title !== undefined ? { title: patch.title } : {}),
+                          ...(patch.description !== undefined
+                              ? { description: patch.description }
+                              : {}),
+                      }
+                    : g,
+            ),
+        );
+        markDirty();
+    };
+
+    const handleDeleteGroup = () => {
+        if (!activeGroupId || !editorState) return;
+        const groupId = activeGroupId;
+        if (!window.confirm('Видалити групу разом із її вузлами на цій карті?')) return;
+
+        const nodesInGroup = editorState.nodes.filter((n) => n.groupId === groupId);
+        const nodeIdsToRemove = new Set(nodesInGroup.map((n) => n.id));
+        const dbNodeIds = nodesInGroup.map((n) => n.id).filter((id) => id > 0);
+        if (dbNodeIds.length > 0) {
+            setDeletedNodeIds((prev) => [...prev, ...dbNodeIds]);
+        }
+
+        const removedGroupEdges = groupEdges.filter(
+            (e) => e.from === groupId || e.to === groupId,
+        );
+        const dbGroupEdgeIds = removedGroupEdges.map((e) => e.id).filter((id) => id > 0);
+        if (dbGroupEdgeIds.length > 0) {
+            setDeletedGroupEdgeIds((prev) => [...prev, ...dbGroupEdgeIds]);
+        }
+
+        setDeletedGroupIds((prev) => [...prev, groupId]);
+        setGroups((prev) => prev.filter((g) => g.id !== groupId));
+        setGroupEdges((prev) =>
+            prev.filter((e) => e.from !== groupId && e.to !== groupId),
+        );
+        updateEditorState((prev) =>
+            prev
+                ? {
+                      ...prev,
+                      nodes: prev.nodes.filter((n) => n.groupId !== groupId),
+                      edges: prev.edges.filter(
+                          (e) =>
+                              !nodeIdsToRemove.has(e.fromNodeId) &&
+                              !nodeIdsToRemove.has(e.toNodeId),
+                      ),
+                  }
+                : prev,
+        );
+        setGroupLayoutOverrides((prev) => {
+            const next = { ...prev };
+            delete next[groupId];
+            return next;
+        });
+        if (selectedGroupId === groupId) {
+            setSelectedGroupId(null);
+            setViewScope('groups');
+        }
+        setActiveGroupId(null);
+        markDirty();
+    };
+
+    const handleImportGroup = async (item: ImportLibraryGroup) => {
+        if (!editorState) return;
+        try {
+            const sourceGraph = await knowledgeMapsApi.getEditorGraph(item.mapId);
+            const sourceNodes = sourceGraph.nodes.filter((n) => n.groupId === item.id);
+            const sourceNodeIds = new Set(sourceNodes.map((n) => n.id));
+            const sourceEdges = sourceGraph.edges.filter(
+                (e) => sourceNodeIds.has(e.fromNodeId) && sourceNodeIds.has(e.toNodeId),
+            );
+
+            const newGroupId = allocateGroupId();
+            const maxOrder = groups.reduce((max, g) => Math.max(max, g.sortOrder), 0);
+            const newGroup: GroupData = {
+                id: newGroupId,
+                title: item.title,
+                description: item.description,
+                level: item.level,
+                sortOrder: maxOrder + 1,
+                topicCount: sourceNodes.length,
+                completedCount: 0,
+                availableCount: 0,
+                progressPercent: 0,
+            };
+
+            const idMap = new Map<number, number>();
+            const newTopics: Topic[] = [];
+            const newNodes: EditorState['nodes'] = [];
+
+            for (const sn of sourceNodes) {
+                const newId = allocateTempNodeId();
+                idMap.set(sn.id, newId);
+                const topic = await topicsApi.create({
+                    title: sn.title,
+                    description: sn.title,
+                    groupId: newGroupId,
+                });
+                newTopics.push(topic);
+                newNodes.push({
+                    id: newId,
+                    title: sn.title,
+                    topicId: topic.id,
+                    x: sn.x,
+                    y: sn.y,
+                    color: sn.color ?? '#6366f1',
+                    groupId: newGroupId,
+                });
+            }
+
+            const newEdges = sourceEdges.map((e) => ({
+                id: allocateTempEdgeId(),
+                fromNodeId: idMap.get(e.fromNodeId)!,
+                toNodeId: idMap.get(e.toNodeId)!,
+                type: e.type ?? 'prerequisite',
+            }));
+
+            setTopics((prev) => [...prev, ...newTopics]);
+            setGroups((prev) => [...prev, newGroup]);
+            unsavedGroupIdsRef.current.add(newGroupId);
+            await knowledgeMapsApi.saveGraph(mapId, {
+                nodes: [],
+                edges: [],
+                groups: [
+                    {
+                        id: newGroup.id,
+                        title: newGroup.title,
+                        description: newGroup.description,
+                        level: newGroup.level,
+                        sortOrder: newGroup.sortOrder,
+                    },
+                ],
+            });
+            unsavedGroupIdsRef.current.delete(newGroupId);
+            updateEditorState((prev) =>
+                prev
+                    ? {
+                          ...prev,
+                          nodes: [...prev.nodes, ...newNodes],
+                          edges: [...prev.edges, ...newEdges],
+                      }
+                    : prev,
+            );
+            for (const n of newNodes) {
+                dirtyNodeIdsRef.current.add(n.id);
+            }
+            setActiveGroupId(newGroupId);
+            markDirty();
+            setStatusMsg(`Групу «${item.title}» додано`);
+        } catch (e) {
+            setStatusMsg(parseApiError(e));
+        }
+    };
+
+    const handleImportNode = async (item: ImportLibraryNode, targetGroupId: string | null) => {
+        if (!editorState || !targetGroupId) return;
+        try {
+            await ensureGroupsPersisted([targetGroupId]);
+            const sourceGraph = await knowledgeMapsApi.getEditorGraph(item.mapId);
+            const sourceNode = sourceGraph.nodes.find((n) => n.id === item.id);
+            if (!sourceNode) {
+                setStatusMsg('Вузол не знайдено на вихідній карті');
+                return;
+            }
+
+            const newId = allocateTempNodeId();
+            const topic = await topicsApi.create({
+                title: sourceNode.title,
+                description: sourceNode.title,
+                groupId: targetGroupId,
+            });
+            setTopics((prev) => [...prev, topic]);
+
+            const groupNodes = editorState.nodes.filter((n) => n.groupId === targetGroupId);
+            const pos = {
+                x: (groupNodes.length % 4) * 180,
+                y: Math.floor(groupNodes.length / 4) * 120,
+            };
+
+            updateEditorState((prev) =>
+                prev
+                    ? {
+                          ...prev,
+                          nodes: [
+                              ...prev.nodes,
+                              {
+                                  id: newId,
+                                  title: sourceNode.title,
+                                  topicId: topic.id,
+                                  x: sourceNode.x ?? pos.x,
+                                  y: sourceNode.y ?? pos.y,
+                                  color: sourceNode.color ?? '#6366f1',
+                                  groupId: targetGroupId,
+                              },
+                          ],
+                      }
+                    : prev,
+            );
+            dirtyNodeIdsRef.current.add(newId);
+            markDirty();
+            setStatusMsg(`Вузол «${sourceNode.title}» додано`);
+        } catch (e) {
+            setStatusMsg(parseApiError(e));
+        }
     };
 
     const handleConnectNodes = (fromId: number, toId: number) => {
@@ -576,6 +851,7 @@ export default function EditorPage() {
             ).get(id) ?? { x: 0, y: 0 };
 
         try {
+            await ensureGroupsPersisted([selectedGroupId]);
             const topic = await topicsApi.create({
                 title: 'Новий вузол',
                 description: 'Новий вузол',
@@ -784,6 +1060,20 @@ export default function EditorPage() {
                             <>
                                 <button
                                     type="button"
+                                    className="btn btn-primary btn-sm"
+                                    onClick={handleAddGroup}
+                                >
+                                    + Група
+                                </button>
+                                <button
+                                    type="button"
+                                    className="btn btn-outline btn-sm"
+                                    onClick={() => setShowLibraryPanel(true)}
+                                >
+                                    Бібліотека
+                                </button>
+                                <button
+                                    type="button"
                                     className={`btn btn-sm ${connectMode ? 'btn-warning' : 'btn-ghost'}`}
                                     onClick={() => {
                                         setConnectMode((v) => !v);
@@ -805,6 +1095,13 @@ export default function EditorPage() {
 
                         {viewScope === 'topics' && (
                             <>
+                                <button
+                                    type="button"
+                                    className="btn btn-outline btn-sm"
+                                    onClick={() => setShowLibraryPanel(true)}
+                                >
+                                    Бібліотека
+                                </button>
                                 <button type="button" className="btn btn-ghost btn-sm" onClick={handleAddNode}>
                                     + Вузол
                                 </button>
@@ -945,6 +1242,73 @@ export default function EditorPage() {
                     )}
                 </div>
 
+                {showRightPanel && viewScope === 'groups' && activeGroup && (
+                    <aside className="w-80 shrink-0 border-l border-base-content/10 bg-base-100/50 flex flex-col max-h-full">
+                        <div className="p-3 border-b border-base-content/5 flex justify-between items-center">
+                            <p className="text-[10px] uppercase tracking-widest opacity-40 font-display font-semibold">
+                                Група
+                            </p>
+                            <button
+                                type="button"
+                                className="btn btn-ghost btn-xs"
+                                onClick={() => setShowRightPanel(false)}
+                            >
+                                ×
+                            </button>
+                        </div>
+                        <div className="p-4 space-y-3 flex-1 overflow-y-auto">
+                            <label className="form-control w-full">
+                                <span className="label-text text-xs opacity-60">Назва</span>
+                                <input
+                                    type="text"
+                                    className="input input-sm input-bordered w-full"
+                                    value={activeGroup.title}
+                                    onChange={(e) => handleGroupPatch({ title: e.target.value })}
+                                />
+                            </label>
+                            <label className="form-control w-full">
+                                <span className="label-text text-xs opacity-60">Опис</span>
+                                <textarea
+                                    className="textarea textarea-sm textarea-bordered w-full min-h-[80px]"
+                                    value={activeGroup.description ?? ''}
+                                    onChange={(e) =>
+                                        handleGroupPatch({
+                                            description: e.target.value || null,
+                                        })
+                                    }
+                                />
+                            </label>
+                            <p className="text-xs opacity-50">
+                                {activeGroup.topicCount} вузлів у групі
+                            </p>
+                            <button
+                                type="button"
+                                className="btn btn-secondary btn-sm w-full"
+                                onClick={() => handleOpenGroup(activeGroup.id)}
+                            >
+                                Деталізація →
+                            </button>
+                            <button
+                                type="button"
+                                className="btn btn-error btn-outline btn-sm w-full"
+                                onClick={handleDeleteGroup}
+                            >
+                                Видалити групу
+                            </button>
+                        </div>
+                    </aside>
+                )}
+
+                {!showRightPanel && viewScope === 'groups' && activeGroup && (
+                    <button
+                        type="button"
+                        className="absolute right-2 top-2 btn btn-xs btn-ghost bg-base-100/90 z-10"
+                        onClick={() => setShowRightPanel(true)}
+                    >
+                        ← Група
+                    </button>
+                )}
+
                 {showRightPanel && viewScope === 'topics' && (
                     <aside className="w-80 shrink-0 border-l border-base-content/10 bg-base-100/50 flex flex-col max-h-full">
                         <div className="p-3 border-b border-base-content/5 flex justify-between items-center">
@@ -975,6 +1339,16 @@ export default function EditorPage() {
                     </button>
                 )}
             </div>
+
+            <EditorLibraryPanel
+                mapId={mapId}
+                open={showLibraryPanel}
+                onClose={() => setShowLibraryPanel(false)}
+                onImportGroup={handleImportGroup}
+                onImportNode={handleImportNode}
+                defaultTargetGroupId={selectedGroupId ?? activeGroupId}
+                currentGroups={resolvedGroups.map((g) => ({ id: g.id, title: g.title }))}
+            />
         </div>
     );
 }

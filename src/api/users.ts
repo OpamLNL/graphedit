@@ -87,6 +87,17 @@ export const usersApi = {
 
     getCabinet: () => apiFetch<CabinetData>('/users/me/cabinet'),
 
+    uploadAvatar: (file: File) => {
+        const form = new FormData();
+        form.append('file', file);
+        return apiFetch<MeResponse>('/users/me/avatar', {
+            method: 'POST',
+            body: form,
+        });
+    },
+
+    removeAvatar: () => apiFetch<MeResponse>('/users/me/avatar', { method: 'DELETE' }),
+
     saveAfterGoogle: (body: {
         email: string;
         name: string;

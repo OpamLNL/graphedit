@@ -247,6 +247,10 @@ export function allocateTempEdgeId(): number {
     return tempEdgeCounter;
 }
 
+export function allocateGroupId(): string {
+    return `g_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export function resetTempEdgeIds(): void {
     tempEdgeCounter = -10001;
 }
@@ -499,6 +503,7 @@ export function editorStateToBulkSave(
     dirtyNodeIds?: ReadonlySet<number>,
     dirtyEdgeKeys?: ReadonlySet<string>,
     fullGraph = false,
+    deletedGroupIds: string[] = [],
 ) {
     const currentLayouts: Record<string, { x: number; y: number }> = {};
     for (const g of groups) {
@@ -581,11 +586,19 @@ export function editorStateToBulkSave(
     return {
         nodes,
         edges,
+        groups: groups.map((g) => ({
+            id: g.id,
+            title: g.title,
+            description: g.description,
+            level: g.level,
+            sortOrder: g.sortOrder,
+        })),
         groupEdges: changedGroupEdges,
         ...(groupLayouts.length > 0 ? { groupLayouts } : {}),
         deletedNodeIds: deletedNodeIds.filter((id) => id > 0),
         deletedEdgeIds: deletedEdgeIds.filter((id) => id > 0),
         deletedGroupEdgeIds: deletedGroupEdgeIds.filter((id) => id > 0),
+        ...(deletedGroupIds.length > 0 ? { deletedGroupIds } : {}),
         createRevision: false,
     };
 }

@@ -56,6 +56,14 @@ export interface BulkSavePayload {
         toNodeId: number;
         type?: string | null;
     }[];
+    groups?: {
+        id: string;
+        title: string;
+        description?: string | null;
+        level?: number;
+        sortOrder?: number;
+        parentId?: string | null;
+    }[];
     groupEdges?: {
         id?: number;
         fromGroupId: string;
@@ -65,6 +73,7 @@ export interface BulkSavePayload {
     deletedNodeIds?: number[];
     deletedEdgeIds?: number[];
     deletedGroupEdgeIds?: number[];
+    deletedGroupIds?: string[];
     groupLayouts?: {
         groupId: string;
         x: number;
@@ -72,6 +81,39 @@ export interface BulkSavePayload {
     }[];
     createRevision?: boolean;
     revisionComment?: string;
+}
+
+export interface ImportLibraryMap {
+    id: number;
+    title: string;
+    status: 'draft' | 'published';
+}
+
+export interface ImportLibraryGroup {
+    id: string;
+    title: string;
+    description: string | null;
+    level: number;
+    sortOrder: number;
+    mapId: number;
+    mapTitle: string;
+    nodeCount: number;
+}
+
+export interface ImportLibraryNode {
+    id: number;
+    title: string;
+    mapId: number;
+    mapTitle: string;
+    groupId: string | null;
+    groupTitle: string | null;
+    topicId: number | null;
+}
+
+export interface ImportLibraryResponse {
+    maps: ImportLibraryMap[];
+    groups: ImportLibraryGroup[];
+    nodes: ImportLibraryNode[];
 }
 
 export const knowledgeMapsApi = {
@@ -87,6 +129,16 @@ export const knowledgeMapsApi = {
 
     getEditorGraph: (id: number) =>
         apiFetch<EditorGraphResponse>(`/knowledge-maps/${id}/graph`),
+
+    getImportLibrary: (id: number, params?: { search?: string; sourceMapId?: number }) => {
+        const qs = new URLSearchParams();
+        if (params?.search?.trim()) qs.set('search', params.search.trim());
+        if (params?.sourceMapId != null) qs.set('sourceMapId', String(params.sourceMapId));
+        const query = qs.toString();
+        return apiFetch<ImportLibraryResponse>(
+            `/knowledge-maps/${id}/import-library${query ? `?${query}` : ''}`,
+        );
+    },
 
     saveGraph: (id: number, payload: BulkSavePayload) =>
         apiFetch<EditorGraphResponse>(`/knowledge-maps/${id}/graph`, {

@@ -23,7 +23,7 @@ export const navLinks: NavLink[] = [
 export default function Navbar() {
     const [isOpen, setIsOpen] = useState(false);
     const [loginLoading, setLoginLoading] = useState(false);
-    const { user, role } = useAuth();
+    const { user, role, avatarUrl, profileName } = useAuth();
     const { theme, toggleTheme } = useTheme();
     const navigate = useNavigate();
     const location = useLocation();
@@ -106,12 +106,16 @@ export default function Navbar() {
                                     </Link>
                                 )}
                                 <Link to="/profile" className="hidden md:flex items-center gap-2 pl-1 hover:opacity-90 transition-opacity">
-                                    {user.photoURL && (
-                                        <img src={user.photoURL} alt="" className="w-8 h-8 rounded-full ring-2 ring-primary/30" />
+                                    {(avatarUrl ?? user.photoURL) && (
+                                        <img
+                                            src={avatarUrl ?? user.photoURL ?? ''}
+                                            alt=""
+                                            className="w-8 h-8 rounded-full ring-2 ring-primary/30 object-cover"
+                                        />
                                     )}
                                     <div className="text-right leading-tight">
                                         <p className="text-xs font-semibold truncate max-w-[100px]">
-                                            {user.displayName?.split(' ')[0]}
+                                            {(profileName ?? user.displayName)?.split(' ')[0] ?? 'Профіль'}
                                         </p>
                                         <p className="text-[10px] opacity-45 capitalize">{role}</p>
                                     </div>
