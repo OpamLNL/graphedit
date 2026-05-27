@@ -153,8 +153,31 @@ export interface UserRecord {
     completedTopics?: number;
 }
 
+export interface PublicUserProfileMap {
+    id: number;
+    title: string;
+    description: string | null;
+    updatedAt: string;
+    publishedAt: string | null;
+}
+
+export interface PublicUserProfile {
+    id: number;
+    name: string;
+    role: string;
+    avatarUrl: string | null;
+    createdAt: string;
+    publishedMaps: PublicUserProfileMap[];
+    stats: {
+        publishedMapsCount: number;
+    };
+}
+
 export const usersApi = {
     me: () => apiFetch<MeResponse>('/users/me'),
+
+    getPublicProfile: (userId: number) =>
+        apiFetch<PublicUserProfile>(`/users/${userId}/profile`),
 
     getCabinet: () => apiFetch<CabinetData>('/users/me/cabinet'),
 

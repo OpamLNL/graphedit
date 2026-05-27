@@ -15,6 +15,7 @@ import AdminPage from './pages/admin/AdminPage.tsx';
 import TeachingStatsPage from './pages/teaching/TeachingStatsPage';
 import TeachingUsersPage from './pages/teaching/TeachingUsersPage';
 import MapLearnersPage from './pages/teaching/MapLearnersPage';
+import UserPublicProfilePage from './pages/UserPublicProfilePage';
 
 function App() {
     return (
@@ -33,6 +34,7 @@ function App() {
                     <Route path="/about" element={<About />} />
                     <Route path="/contact" element={<Contact />} />
                     <Route path="/profile" element={<ProfilePage />} />
+                    <Route path="/users/:userId" element={<UserPublicProfilePage />} />
                     <Route path="/teaching" element={<TeachingStatsPage />} />
                     <Route path="/teaching/users" element={<TeachingUsersPage />} />
                     <Route path="/teaching/maps/:mapId" element={<MapLearnersPage />} />

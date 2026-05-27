@@ -9,6 +9,7 @@ export interface MapListProgress {
 }
 
 export interface MapListAuthor {
+    id: number | null;
     uid: string;
     name: string | null;
     email: string | null;

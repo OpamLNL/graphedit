@@ -1,28 +1,12 @@
-import type { GraphEditMap } from '../api/graphEditMaps';
+import type { GraphEditMap } from '../../api/graphEditMaps';
+import { AuthorLink } from './AuthorLink';
 
 interface MapCardMetaProps {
     map: GraphEditMap;
     currentUserUid?: string | null;
 }
 
-function resolveAuthorLabel(map: GraphEditMap, currentUserUid?: string | null): string {
-    const uid = map.author?.uid || map.ownerUid;
-    const displayName = map.author?.displayName?.trim();
-    const isOwnMap = Boolean(uid && currentUserUid && uid === currentUserUid);
-
-    if (displayName && displayName !== 'Невідомий автор') {
-        return isOwnMap ? `${displayName} (ви)` : displayName;
-    }
-
-    if (isOwnMap) {
-        return 'Ви (автор)';
-    }
-
-    return 'Невідомий автор';
-}
-
 export default function MapCardMeta({ map, currentUserUid }: MapCardMetaProps) {
-    const authorLabel = resolveAuthorLabel(map, currentUserUid);
     const showProgress = map.status === 'published' && map.myProgress != null;
     const progress = map.myProgress;
 
@@ -30,7 +14,7 @@ export default function MapCardMeta({ map, currentUserUid }: MapCardMetaProps) {
         <div className="space-y-2.5 pt-0.5 border-t border-base-content/5">
             <p className="text-xs text-base-content/70">
                 <span className="font-medium text-base-content/50">Автор:</span>{' '}
-                {authorLabel}
+                <AuthorLink map={map} currentUserUid={currentUserUid} />
             </p>
 
             {showProgress && progress && progress.total > 0 ? (
