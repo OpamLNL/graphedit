@@ -231,24 +231,28 @@ function MapCard({
 
     return (
         <div className="glass-card p-5 flex flex-col gap-3 hover:border-primary/30 transition-colors">
-            <Link to={cardHref} className="flex flex-col gap-3 no-underline text-base-content flex-1">
-                <div className="flex items-start justify-between gap-2">
-                    <h2 className="font-display font-bold text-base leading-snug">{map.title}</h2>
-                    <div className="flex flex-col items-end gap-1 shrink-0">
-                        <span
-                            className={`badge badge-sm ${
-                                map.status === 'published' ? 'badge-success' : 'badge-warning'
-                            }`}
-                        >
-                            {map.status === 'published' ? 'published' : 'draft'}
-                        </span>
-                        <MapGraphValidationBadge map={map} />
+            <div className="flex flex-col gap-3 flex-1">
+                <Link to={cardHref} className="block no-underline text-base-content">
+                    <div className="flex items-start justify-between gap-2">
+                        <h2 className="font-display font-bold text-base leading-snug hover:text-primary">
+                            {map.title}
+                        </h2>
+                        <div className="flex flex-col items-end gap-1 shrink-0">
+                            <span
+                                className={`badge badge-sm ${
+                                    map.status === 'published' ? 'badge-success' : 'badge-warning'
+                                }`}
+                            >
+                                {map.status === 'published' ? 'published' : 'draft'}
+                            </span>
+                            <MapGraphValidationBadge map={map} />
+                        </div>
                     </div>
-                </div>
 
-                {map.description && (
-                    <p className="text-xs opacity-55 line-clamp-2">{map.description}</p>
-                )}
+                    {map.description && (
+                        <p className="text-xs opacity-55 line-clamp-2 mt-3">{map.description}</p>
+                    )}
+                </Link>
 
                 {map.status === 'published' && (onFavorite || onRate) && (
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -269,7 +273,7 @@ function MapCard({
                 <MapCardMeta map={map} currentUserUid={currentUserUid} />
 
                 <p className="text-[10px] opacity-40">Оновлено {updated}</p>
-            </Link>
+            </div>
 
             <div className="flex gap-2 mt-auto pt-2">
                 {canView && (
