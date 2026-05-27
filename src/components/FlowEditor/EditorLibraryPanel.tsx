@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-    knowledgeMapsApi,
+    graphEditMapsApi,
     type ImportLibraryGroup,
     type ImportLibraryNode,
     type ImportLibraryResponse,
-} from '../../api/knowledgeMaps';
+} from '../../api/graphEditMaps';
 
 type LibraryTab = 'groups' | 'nodes';
 
@@ -52,7 +52,7 @@ export default function EditorLibraryPanel({
         setLoading(true);
         setError(null);
         try {
-            const result = await knowledgeMapsApi.getImportLibrary(mapId, {
+            const result = await graphEditMapsApi.getImportLibrary(mapId, {
                 search: debouncedSearch || undefined,
                 sourceMapId: sourceMapId === '' ? undefined : sourceMapId,
             });

@@ -36,4 +36,4 @@ export { progressApi } from './progress';
 export { nodesApi } from './nodes';
 export { topicsApi } from './topics';
 export { adminApi } from './admin';
-export { knowledgeMapsApi } from './knowledgeMaps';
+export { graphEditMapsApi } from './graphEditMaps';

@@ -60,6 +60,42 @@ export interface GroupGraphResponse {
     groupLayout?: Record<string, { x: number; y: number }>;
 }
 
+export interface MapOverviewResponse {
+    mapId: number;
+    groups: KnowledgeGroupDto[];
+    groupEdges: GroupEdgeDto[];
+    groupLayout: Record<string, { x: number; y: number }>;
+    progress: {
+        mapId: number;
+        total: number;
+        completed: number;
+        available: number;
+        locked: number;
+        percent: number;
+    };
+    nodesIndex: {
+        id: number;
+        title: string;
+        groupId: string | null;
+        status: 'completed' | 'available' | 'locked';
+        topicId: number | null;
+    }[];
+}
+
+export interface GroupNodesResponse {
+    mapId: number;
+    groupId: string;
+    nodes: GraphNode[];
+    edges: GraphEdge[];
+    topics: {
+        id: number;
+        title: string;
+        description: string;
+        groupId: string | null;
+        orderInGroup: number;
+    }[];
+}
+
 export interface NodeMediaItem {
     id: number;
     url: string;
@@ -74,6 +110,14 @@ export interface NodeContentResponse {
 }
 
 export const nodesApi = {
+    getMapOverview: (mapId: number) =>
+        apiFetch<MapOverviewResponse>(`/nodes/map/${mapId}/overview`, { cache: 'no-store' }),
+
+    getGroupNodes: (mapId: number, groupId: string) =>
+        apiFetch<GroupNodesResponse>(`/nodes/map/${mapId}/groups/${encodeURIComponent(groupId)}/nodes`, {
+            cache: 'no-store',
+        }),
+
     getGraph: (mapId?: number) => {
         const q = mapId ? `?mapId=${mapId}` : '';
         return apiFetch<GraphResponse>(`/nodes/graph${q}`, { cache: 'no-store' });

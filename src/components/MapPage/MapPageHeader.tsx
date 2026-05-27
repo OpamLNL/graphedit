@@ -1,12 +1,12 @@
 import { Link } from 'react-router-dom';
-import type { KnowledgeMap } from '../../api/knowledgeMaps';
+import type { GraphEditMap } from '../../api/graphEditMaps';
 import MapGraphValidationBadge from '../MapGraphValidationBadge';
 import type { ProgressSummary } from '../../api/progress';
 import type { GraphViewScope } from '../Graph/Graph';
 import type { GroupData, NodeData } from '../Graph/Graph';
 
 interface MapPageHeaderProps {
-    mapMeta: KnowledgeMap | null;
+    mapMeta: GraphEditMap | null;
     mapId: number;
     groups: GroupData[];
     nodes: NodeData[];
@@ -40,9 +40,10 @@ export default function MapPageHeader({
     onSearchChange,
     onSearchPick,
 }: MapPageHeaderProps) {
-    const completedNodes = nodes.filter((n) => n.status === 'completed').length;
-    const availableNodes = nodes.filter((n) => n.status === 'available').length;
-    const percent = progress?.percent ?? (nodes.length > 0 ? Math.round((completedNodes / nodes.length) * 100) : 0);
+    const completedNodes = progress?.completed ?? nodes.filter((n) => n.status === 'completed').length;
+    const availableNodes = progress?.available ?? nodes.filter((n) => n.status === 'available').length;
+    const totalNodes = progress?.total ?? nodes.length;
+    const percent = progress?.percent ?? (totalNodes > 0 ? Math.round((completedNodes / totalNodes) * 100) : 0);
 
     return (
         <header className="shrink-0 border-b border-base-content/10 bg-base-100/80 backdrop-blur-sm">
@@ -116,7 +117,7 @@ export default function MapPageHeader({
                 <div className="flex flex-wrap items-center gap-3">
                     <div className="flex flex-wrap gap-2 text-xs">
                         <span className="badge badge-ghost">{groups.length} груп</span>
-                        <span className="badge badge-ghost">{nodes.length} тем</span>
+                        <span className="badge badge-ghost">{totalNodes} тем</span>
                         <span className="badge badge-success badge-outline">{completedNodes} вивчено</span>
                         <span className="badge badge-primary badge-outline">{availableNodes} доступно</span>
                     </div>

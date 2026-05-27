@@ -143,8 +143,14 @@ export default function ProfilePage() {
 
     const { stats, maps, recentCompleted, teachingStats } = cabinet;
     const profileRole = cabinet.user.role ?? role ?? 'student';
-    const isTeacher = profileRole === 'teacher';
-    const showTeachingStats = isTeacher && teachingStats != null;
+    const showTeachingStats = isEditor && teachingStats != null;
+
+    const ownedPublishedWithStats = maps.filter(
+        (m) =>
+            m.status === 'published' &&
+            m.teachingStats &&
+            (!m.ownerUid || m.ownerUid === user.uid),
+    );
 
     const statCards = showTeachingStats
         ? [
@@ -297,14 +303,94 @@ export default function ProfilePage() {
                 ))}
             </section>
 
-            {showTeachingStats && teachingStats.publishedMaps > 0 && (
+            {showTeachingStats && ownedPublishedWithStats.length > 0 && (
                 <section className="mb-8">
-                    <h2 className="font-display text-xl font-bold mb-4">
+                    <h2 className="font-display text-xl font-bold mb-2">
                         Проходження студентами
                     </h2>
-                    <p className="text-sm opacity-55 mb-4 -mt-2">
+                    <p className="text-sm opacity-55 mb-4">
                         Статистика по опублікованих картах, які ви створили
                     </p>
+                    <div className="glass-card overflow-x-auto">
+                        <table className="table table-sm w-full">
+                            <thead>
+                                <tr className="text-xs opacity-60">
+                                    <th>Карта</th>
+                                    <th className="text-center">Учнів</th>
+                                    <th className="text-center">Активних</th>
+                                    <th className="text-center">Сер. прогрес</th>
+                                    <th className="text-center">Завершили</th>
+                                    <th className="text-center">В процесі</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {ownedPublishedWithStats.map((map) => {
+                                    const ts = map.teachingStats!;
+                                    return (
+                                        <tr key={map.id} className="hover:bg-base-200/30">
+                                            <td>
+                                                <Link
+                                                    to={`/map/${map.id}`}
+                                                    className="font-medium text-sm hover:text-primary"
+                                                >
+                                                    {map.title}
+                                                </Link>
+                                            </td>
+                                            <td className="text-center text-sm">
+                                                {ts.studentsTotal}
+                                            </td>
+                                            <td className="text-center text-sm text-primary">
+                                                {ts.studentsActive}
+                                            </td>
+                                            <td className="text-center text-sm font-semibold">
+                                                {ts.averagePercent}%
+                                            </td>
+                                            <td className="text-center text-sm text-success">
+                                                {ts.completionDistribution.completed}
+                                            </td>
+                                            <td className="text-center text-sm">
+                                                {ts.completionDistribution.inProgress}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                    {ownedPublishedWithStats.some((m) => m.teachingStats!.topStudents.length > 0) && (
+                        <div className="mt-4 space-y-4">
+                            {ownedPublishedWithStats
+                                .filter((m) => m.teachingStats!.topStudents.length > 0)
+                                .map((map) => (
+                                    <div key={map.id} className="glass-card p-4">
+                                        <h3 className="font-display font-semibold text-sm mb-3">
+                                            {map.title} — учні
+                                        </h3>
+                                        <ul className="divide-y divide-base-content/5">
+                                            {map.teachingStats!.topStudents.map((student, index) => (
+                                                <li
+                                                    key={`${student.email || student.name}-${index}`}
+                                                    className="flex items-center justify-between gap-3 py-2 text-sm"
+                                                >
+                                                    <span className="truncate opacity-80">
+                                                        {student.name}
+                                                        {student.email && (
+                                                            <span className="text-xs opacity-45 ml-2">
+                                                                {student.email}
+                                                            </span>
+                                                        )}
+                                                    </span>
+                                                    <span className="shrink-0 font-medium">
+                                                        {student.completed}/{student.total} ·{' '}
+                                                        {student.percent}%
+                                                    </span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                ))}
+                        </div>
+                    )}
                 </section>
             )}
 
@@ -511,8 +597,12 @@ function MapProgressCard({
                 <p className="text-xs opacity-45">
                     {map.status === 'draft'
                         ? 'Чернетка — опублікуйте для студентів'
-                        : 'Немає вузлів для відстеження прогресу'}
+                        : isOwner && map.status === 'published'
+                          ? 'Ще ніхто не проходив цю карту'
+                          : 'Немає вузлів для відстеження прогресу'}
                 </p>
+            ) : map.teachingStats.studentsTotal === 0 ? (
+                <p className="text-xs opacity-45">Ще ніхто не проходив цю карту</p>
             ) : null}
 
             <p className="text-[10px] opacity-35">Оновлено {updated}</p>

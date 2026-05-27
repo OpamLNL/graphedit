@@ -65,8 +65,8 @@ export default function Navbar() {
                             G
                         </div>
                         <div className="hidden sm:block">
-                            <span className="font-display font-bold text-base leading-none">GraphMap</span>
-                            <span className="block text-[10px] opacity-50 tracking-widest uppercase">Editor</span>
+                            <span className="font-display font-bold text-base leading-none">GraphEdit</span>
+                            <span className="block text-[10px] opacity-50 tracking-widest uppercase">Карти знань</span>
                         </div>
                     </Link>
 

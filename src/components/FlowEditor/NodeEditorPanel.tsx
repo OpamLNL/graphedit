@@ -51,6 +51,7 @@ export default function NodeEditorPanel({
                 <input
                     className="input input-bordered input-sm"
                     value={node.label}
+                    spellCheck={false}
                     onChange={(e) => onChange({ label: e.target.value })}
                 />
             </label>

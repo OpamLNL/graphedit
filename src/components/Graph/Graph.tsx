@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
 import { Network, DataSet } from 'vis-network/standalone';
 import { useTheme } from '../../context/ThemeContext';
 import { buildViewGraphOptions } from './graphStyles';
-import GraphMapHUD from './GraphMapHUD';
+import GraphEditHUD from './GraphEditHUD';
 import {
     applyStoredViewport,
     buildFocusMoveTo,
@@ -1240,7 +1240,7 @@ export default function Graph({
     return (
         <div ref={shellRef} className="absolute inset-0 graph-map-shell overflow-hidden rounded-lg">
             <div ref={containerRef} className="absolute inset-0 z-0" />
-            <GraphMapHUD
+            <GraphEditHUD
                 viewScope={viewScope}
                 groupTitle={selectedGroup?.title ?? null}
                 activeGroupTitle={activeGroup?.title ?? null}

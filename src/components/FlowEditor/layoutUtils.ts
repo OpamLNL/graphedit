@@ -1,6 +1,6 @@
 import dagre from '@dagrejs/dagre';
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
-import type { EditorGraphResponse } from '../../api/knowledgeMaps';
+import type { EditorGraphResponse } from '../../api/graphEditMaps';
 import type { Topic } from '../../api/topics';
 import type {
     GraphPayload,

@@ -1,4 +1,4 @@
-import type { GraphValidationResult } from '../api/knowledgeMaps';
+import type { GraphValidationResult } from '../api/graphEditMaps';
 
 interface EditorValidationPanelProps {
     validation: GraphValidationResult;

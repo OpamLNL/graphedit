@@ -92,7 +92,7 @@ export default function Home() {
                         </h1>
 
                         <p className="text-lg opacity-70 mb-8 max-w-lg leading-relaxed">
-                            GraphMap — вебзастосунок для побудови навчальних DAG-графів.
+                            GraphEdit — вебзастосунок для побудови навчальних DAG-графів.
                             Візуальний редактор, валідація структури, версіонування та публікація для студентів.
                         </p>
 
@@ -236,7 +236,7 @@ export default function Home() {
             </section>
 
             <footer className="border-t border-base-content/5 py-8 text-center text-xs opacity-40">
-                GraphMap · Дипломний проєкт · Редактор карт знань на базі графових структур
+                GraphEdit · Дипломний проєкт · Редактор карт знань на базі графових структур
             </footer>
         </div>
     );

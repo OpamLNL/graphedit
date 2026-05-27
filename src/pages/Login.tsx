@@ -27,7 +27,7 @@ export default function Login() {
             <div className="absolute inset-0 grid-overlay pointer-events-none" />
             <div className="glass-card p-10 max-w-md w-full mx-4 text-center relative">
                 <div className="text-5xl mb-4">🗺️</div>
-                <h1 className="text-2xl font-bold mb-2">Knowledge Map</h1>
+                <h1 className="text-2xl font-bold mb-2">GraphEdit</h1>
                 <p className="opacity-70 mb-8 text-sm">
                     Увійди через Google, щоб зберігати прогрес і відкривати нові теми
                 </p>

@@ -3,6 +3,7 @@ import { Link, Navigate, useParams } from 'react-router-dom';
 import NodeEditorPanel from '../components/FlowEditor/NodeEditorPanel';
 import EditorLibraryPanel from '../components/FlowEditor/EditorLibraryPanel';
 import EditorValidationPanel from '../components/FlowEditor/EditorValidationPanel';
+import EditorRevisionsPanel from '../components/FlowEditor/EditorRevisionsPanel';
 import Graph, {
     type GraphPayload,
     type GraphViewScope,
@@ -34,12 +35,14 @@ import {
 } from '../utils/graphNavigationStorage';
 import type { GroupGraphResponse } from '../api/nodes';
 import {
-    knowledgeMapsApi,
+    graphEditMapsApi,
     type GraphValidationResult,
     type ImportLibraryGroup,
     type ImportLibraryNode,
-    type KnowledgeMap,
-} from '../api/knowledgeMaps';
+    type GraphEditMap,
+    type MapJsonImportPayload,
+    type EditorGraphResponse,
+} from '../api/graphEditMaps';
 import { nodesApi } from '../api/nodes';
 import { topicsApi, type Topic } from '../api/topics';
 import { ApiError } from '../api/client';
@@ -93,7 +96,7 @@ export default function EditorPage() {
     const mapId = Number(mapIdParam);
     const { user, role, loading: authLoading } = useAuth();
 
-    const [map, setMap] = useState<KnowledgeMap | null>(null);
+    const [map, setMap] = useState<GraphEditMap | null>(null);
     const [editorState, setEditorState] = useState<EditorState | null>(null);
     const [topics, setTopics] = useState<Topic[]>([]);
     const [groups, setGroups] = useState<GroupData[]>([]);
@@ -113,6 +116,7 @@ export default function EditorPage() {
     const [deletedGroupEdgeIds, setDeletedGroupEdgeIds] = useState<number[]>([]);
     const [deletedGroupIds, setDeletedGroupIds] = useState<string[]>([]);
     const [showLibraryPanel, setShowLibraryPanel] = useState(false);
+    const [showRevisionsPanel, setShowRevisionsPanel] = useState(false);
     const [statusMsg, setStatusMsg] = useState<string | null>(null);
     const [viewScope, setViewScope] = useState<GraphViewScope>('groups');
     const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -122,6 +126,9 @@ export default function EditorPage() {
     const [groupLayoutOverrides, setGroupLayoutOverrides] = useState<
         Record<string, { x: number; y: number }>
     >({});
+    const [graphReloadKey, setGraphReloadKey] = useState(0);
+    const [jsonBusy, setJsonBusy] = useState(false);
+    const importJsonInputRef = useRef<HTMLInputElement>(null);
     const saveSnapshotRef = useRef<EditorSaveSnapshot | null>(null);
     const editorStateRef = useRef<EditorState | null>(null);
     const nodeLayoutReaderRef = useRef<(() => Map<number, { x: number; y: number }>) | null>(null);
@@ -170,8 +177,8 @@ export default function EditorPage() {
         let cancelled = false;
         setLoading(true);
         Promise.all([
-            knowledgeMapsApi.getOne(mapId),
-            knowledgeMapsApi.getEditorGraph(mapId),
+            graphEditMapsApi.getOne(mapId),
+            graphEditMapsApi.getEditorGraph(mapId),
             topicsApi.getAll(),
             nodesApi.getGroupGraph(mapId).catch(() => null),
         ])
@@ -251,7 +258,7 @@ export default function EditorPage() {
         return () => {
             cancelled = true;
         };
-    }, [user, isEditor, mapId, authLoading]);
+    }, [user, isEditor, mapId, authLoading, graphReloadKey]);
 
     useEffect(() => {
         if (!mapId || Number.isNaN(mapId) || loading || !navReadyRef.current) return;
@@ -265,7 +272,7 @@ export default function EditorPage() {
 
     useEffect(() => {
         navReadyRef.current = false;
-    }, [mapId]);
+    }, [mapId, graphReloadKey]);
 
     const graphPayload = useMemo((): GraphPayload | null => {
         if (!editorState) return null;
@@ -331,7 +338,7 @@ export default function EditorPage() {
             throw new Error('Групу не знайдено в редакторі — спробуйте ще раз');
         }
 
-        await knowledgeMapsApi.saveGraph(mapId, {
+        await graphEditMapsApi.saveGraph(mapId, {
             nodes: [],
             edges: [],
             groups: payloadGroups,
@@ -381,7 +388,7 @@ export default function EditorPage() {
                 groupEdges,
                 topicById,
             );
-            const result = await knowledgeMapsApi.validate(mapId, {
+            const result = await graphEditMapsApi.validate(mapId, {
                 nodes: payload.nodes.map((n) => ({
                     id: n.id,
                     title: n.title,
@@ -406,6 +413,69 @@ export default function EditorPage() {
             setValidating(false);
         }
     };
+
+    const applySavedGraphResponse = useCallback(
+        async (saved: EditorGraphResponse) => {
+            const updatedTopics = await topicsApi.getAll().catch(() => topics);
+            setTopics(updatedTopics);
+            const tMap = new Map(updatedTopics.map((t) => [t.id, t]));
+            const nextState = initEditorState(saved, tMap);
+            updateEditorState(nextState);
+            const groupMeta = await nodesApi.getGroupGraph(mapId).catch(() => null);
+            let nextGroups = groups;
+            let nextOverrides = groupLayoutOverrides;
+            let nextGroupEdges = groupEdges;
+            if (groupMeta) {
+                nextGroups = groupMeta.groups ?? [];
+                nextOverrides = groupLayoutOverridesFromMeta(groupMeta);
+                nextGroupEdges = (groupMeta.groupEdges ?? []).map((e) => ({
+                    id: e.id,
+                    from: e.from,
+                    to: e.to,
+                    type: e.type,
+                }));
+                setGroups(nextGroups);
+                setGroupLayoutOverrides(nextOverrides);
+                setGroupEdges(nextGroupEdges);
+            }
+            saveSnapshotRef.current = buildEditorSaveSnapshot(
+                nextState,
+                nextGroupEdges,
+                mergeGroupLayouts(
+                    nextGroups.length > 0
+                        ? nextGroups
+                        : editorStateToGraphPayload(nextState, nextGroups, nextGroupEdges, tMap)
+                              .groups,
+                    nextOverrides,
+                ),
+            );
+            pendingNodePositionsRef.current.clear();
+            dirtyNodeIdsRef.current.clear();
+            dirtyEdgeKeysRef.current.clear();
+            setDeletedNodeIds([]);
+            setDeletedEdgeIds([]);
+            setDeletedGroupEdgeIds([]);
+            setDeletedGroupIds([]);
+            setDirty(false);
+            unsavedGroupIdsRef.current.clear();
+            setConnectSourceId(null);
+            setConnectSourceGroupId(null);
+            setActiveNodeId(null);
+            setValidation(null);
+            setGraphReloadKey((k) => k + 1);
+
+            const mapMeta = await graphEditMapsApi.getOne(mapId);
+            setMap(mapMeta);
+        },
+        [
+            mapId,
+            topics,
+            groups,
+            groupLayoutOverrides,
+            groupEdges,
+            updateEditorState,
+        ],
+    );
 
     const persistEditorGraph = useCallback(async (): Promise<void> => {
         const currentEditorState = editorStateRef.current;
@@ -441,54 +511,8 @@ export default function EditorPage() {
             deletedGroupIdsRef.current,
         );
 
-        const saved = await knowledgeMapsApi.saveGraph(mapId, payload);
-        const updatedTopics = await topicsApi.getAll().catch(() => topics);
-        setTopics(updatedTopics);
-        const tMap = new Map(updatedTopics.map((t) => [t.id, t]));
-        const nextState = initEditorState(saved, tMap);
-        updateEditorState(nextState);
-        const groupMeta = await nodesApi.getGroupGraph(mapId).catch(() => null);
-        let nextGroups = groups;
-        let nextOverrides = groupLayoutOverrides;
-        let nextGroupEdges = groupEdges;
-        if (groupMeta) {
-            nextGroups = groupMeta.groups ?? [];
-            nextOverrides = groupLayoutOverridesFromMeta(groupMeta);
-            nextGroupEdges = (groupMeta.groupEdges ?? []).map((e) => ({
-                id: e.id,
-                from: e.from,
-                to: e.to,
-                type: e.type,
-            }));
-            setGroups(nextGroups);
-            setGroupLayoutOverrides(nextOverrides);
-            setGroupEdges(nextGroupEdges);
-        }
-        saveSnapshotRef.current = buildEditorSaveSnapshot(
-            nextState,
-            nextGroupEdges,
-            mergeGroupLayouts(
-                nextGroups.length > 0
-                    ? nextGroups
-                    : editorStateToGraphPayload(nextState, nextGroups, nextGroupEdges, tMap)
-                          .groups,
-                nextOverrides,
-            ),
-        );
-        pendingNodePositionsRef.current.clear();
-        dirtyNodeIdsRef.current.clear();
-        dirtyEdgeKeysRef.current.clear();
-        setDeletedNodeIds([]);
-        setDeletedEdgeIds([]);
-        setDeletedGroupEdgeIds([]);
-        setDeletedGroupIds([]);
-        setDirty(false);
-        unsavedGroupIdsRef.current.clear();
-        setConnectSourceId(null);
-        setConnectSourceGroupId(null);
-
-        const mapMeta = await knowledgeMapsApi.getOne(mapId);
-        setMap(mapMeta);
+        const saved = await graphEditMapsApi.saveGraph(mapId, payload);
+        await applySavedGraphResponse(saved);
     }, [
         mapId,
         topics,
@@ -498,8 +522,16 @@ export default function EditorPage() {
         groupEdges,
         viewScope,
         selectedGroupId,
-        updateEditorState,
+        applySavedGraphResponse,
     ]);
+
+    const handleRestoredFromRevision = useCallback(
+        async (graph: EditorGraphResponse) => {
+            await applySavedGraphResponse(graph);
+            setStatusMsg('Карту відновлено зі знімка');
+        },
+        [applySavedGraphResponse],
+    );
 
     const handleSave = async () => {
         setSaving(true);
@@ -512,6 +544,71 @@ export default function EditorPage() {
             setStatusMsg(`Помилка збереження: ${parseApiError(e)}`);
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleExportJson = async () => {
+        if (!mapId || Number.isNaN(mapId)) return;
+        setJsonBusy(true);
+        setStatusMsg(null);
+        try {
+            const data = await graphEditMapsApi.exportJson(mapId);
+            const safeTitle = (data.map.title || `map-${mapId}`)
+                .replace(/[^\p{L}\p{N}\-_]+/gu, '-')
+                .slice(0, 48);
+            const blob = new Blob([JSON.stringify(data, null, 2)], {
+                type: 'application/json;charset=utf-8',
+            });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = `${safeTitle || 'map'}-${mapId}.json`;
+            anchor.click();
+            URL.revokeObjectURL(url);
+            const stats = data.mediaStats;
+            setStatusMsg(
+                stats
+                    ? `JSON експортовано (${stats.embeddedImages} зображень вбудовано${stats.skippedImages ? `, ${stats.skippedImages} пропущено` : ''})`
+                    : 'JSON експортовано',
+            );
+        } catch (e) {
+            console.error(e);
+            setStatusMsg(`Помилка експорту: ${parseApiError(e)}`);
+        } finally {
+            setJsonBusy(false);
+        }
+    };
+
+    const handleImportJsonFile = async (file: File | null) => {
+        if (!file || !mapId || Number.isNaN(mapId)) return;
+        setJsonBusy(true);
+        setStatusMsg(null);
+        try {
+            const text = await file.text();
+            const parsed = JSON.parse(text) as MapJsonImportPayload;
+            if (!parsed.formatVersion || !Array.isArray(parsed.nodes)) {
+                throw new Error('Невірний формат JSON (потрібні formatVersion та nodes)');
+            }
+
+            const replace = window.confirm(
+                'Замінити всю поточну карту вмістом файлу?\n\nOK — замінити (replace)\nСкасувати — додати до карти (merge)',
+            );
+
+            const result = await graphEditMapsApi.importJson(mapId, {
+                ...parsed,
+                importMode: replace ? 'replace' : 'merge',
+            });
+
+            setGraphReloadKey((k) => k + 1);
+            setStatusMsg(
+                `Імпортовано ${result.importedNodes} вузлів, ${result.importedEdges} ребер (${result.importMode})`,
+            );
+        } catch (e) {
+            console.error(e);
+            setStatusMsg(`Помилка імпорту: ${parseApiError(e)}`);
+        } finally {
+            setJsonBusy(false);
+            if (importJsonInputRef.current) importJsonInputRef.current.value = '';
         }
     };
 
@@ -528,7 +625,7 @@ export default function EditorPage() {
                     setSaving(false);
                 }
             }
-            const updated = await knowledgeMapsApi.publish(mapId);
+            const updated = await graphEditMapsApi.publish(mapId);
             setMap(updated);
             setValidation(null);
             setStatusMsg(
@@ -667,7 +764,7 @@ export default function EditorPage() {
     const handleImportGroup = async (item: ImportLibraryGroup) => {
         if (!editorState) return;
         try {
-            const sourceGraph = await knowledgeMapsApi.getEditorGraph(item.mapId);
+            const sourceGraph = await graphEditMapsApi.getEditorGraph(item.mapId);
             const sourceNodes = sourceGraph.nodes.filter((n) => n.groupId === item.id);
             const sourceNodeIds = new Set(sourceNodes.map((n) => n.id));
             const sourceEdges = sourceGraph.edges.filter(
@@ -694,7 +791,7 @@ export default function EditorPage() {
 
             setGroups((prev) => [...prev, newGroup]);
             unsavedGroupIdsRef.current.add(newGroupId);
-            await knowledgeMapsApi.saveGraph(mapId, {
+            await graphEditMapsApi.saveGraph(mapId, {
                 nodes: [],
                 edges: [],
                 groups: [
@@ -761,7 +858,7 @@ export default function EditorPage() {
         if (!editorState || !targetGroupId) return;
         try {
             await ensureGroupsPersisted([targetGroupId]);
-            const sourceGraph = await knowledgeMapsApi.getEditorGraph(item.mapId);
+            const sourceGraph = await graphEditMapsApi.getEditorGraph(item.mapId);
             const sourceNode = sourceGraph.nodes.find((n) => n.id === item.id);
             if (!sourceNode) {
                 setStatusMsg('Вузол не знайдено на вихідній карті');
@@ -1229,6 +1326,39 @@ export default function EditorPage() {
                         <Link to={`/map/${mapId}`} className="btn btn-ghost btn-sm">Перегляд</Link>
                         <button
                             type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => setShowRevisionsPanel(true)}
+                        >
+                            Версії
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            disabled={jsonBusy}
+                            onClick={() => void handleExportJson()}
+                        >
+                            {jsonBusy ? '...' : 'JSON ↓'}
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            disabled={jsonBusy}
+                            onClick={() => importJsonInputRef.current?.click()}
+                        >
+                            JSON ↑
+                        </button>
+                        <input
+                            ref={importJsonInputRef}
+                            type="file"
+                            accept="application/json,.json"
+                            className="hidden"
+                            onChange={(e) => {
+                                const file = e.target.files?.[0] ?? null;
+                                void handleImportJsonFile(file);
+                            }}
+                        />
+                        <button
+                            type="button"
                             className={`btn btn-outline btn-sm ${validation && rightPanelTab === 'validation' && showRightPanel ? 'btn-active' : ''}`}
                             onClick={() => {
                                 if (validation) {
@@ -1476,6 +1606,14 @@ export default function EditorPage() {
                 onImportNode={handleImportNode}
                 defaultTargetGroupId={selectedGroupId ?? activeGroupId}
                 currentGroups={resolvedGroups.map((g) => ({ id: g.id, title: g.title }))}
+            />
+
+            <EditorRevisionsPanel
+                mapId={mapId}
+                open={showRevisionsPanel}
+                dirty={dirty}
+                onClose={() => setShowRevisionsPanel(false)}
+                onRestored={handleRestoredFromRevision}
             />
         </div>
     );

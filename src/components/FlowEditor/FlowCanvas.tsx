@@ -33,7 +33,7 @@ import {
     resetTempNodeIds,
     type KnowledgeNodeData,
 } from './layoutUtils';
-import type { EditorGraphResponse } from '../../api/knowledgeMaps';
+import type { EditorGraphResponse } from '../../api/graphEditMaps';
 import type { Topic } from '../../api/topics';
 
 const nodeTypes = { knowledge: KnowledgeNode };

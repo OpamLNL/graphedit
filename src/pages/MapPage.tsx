@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import Graph, {
     type GraphPayload,
@@ -11,23 +11,51 @@ import Graph, {
 import MapPageHeader from '../components/MapPage/MapPageHeader';
 import MapGroupsOverview from '../components/MapPage/MapGroupsOverview';
 import NodeInfoPanel from '../components/NodeInfoPanel/NodeInfoPanel';
-import { nodesApi } from '../api/nodes';
-import { topicsApi, type Topic } from '../api/topics';
-import { knowledgeMapsApi, type KnowledgeMap } from '../api/knowledgeMaps';
-import { progressApi, type ProgressSummary } from '../api/progress';
+import { nodesApi, type GroupNodesResponse, type MapOverviewResponse } from '../api/nodes';
+import { graphEditMapsApi, type GraphEditMap } from '../api/graphEditMaps';
+import { type ProgressSummary } from '../api/progress';
 import { useAuth } from '../context/AuthContext';
-import {
-    deriveGroupEdgesFromNodes,
-    deriveGroupsFromNodes,
-    filterGroupEdgesForGroups,
-    filterGroupsForMap,
-    mergeGroupLayouts,
-} from '../utils/groupGraph';
+import type { Topic } from '../api/topics';
+import { mergeGroupLayouts } from '../utils/groupGraph';
 import {
     applyStoredNavigation,
     navigationStorageKey,
     saveStoredNavigation,
 } from '../utils/graphNavigationStorage';
+
+function buildOverviewPayload(overview: MapOverviewResponse): GraphPayload {
+    const layoutOverrides: Record<string, { x: number; y: number }> = {};
+    for (const g of overview.groups) {
+        if (g.x != null && g.y != null) {
+            layoutOverrides[g.id] = { x: Math.round(g.x), y: Math.round(g.y) };
+        }
+    }
+    for (const [id, pos] of Object.entries(overview.groupLayout ?? {})) {
+        layoutOverrides[id] = { x: Math.round(pos.x), y: Math.round(pos.y) };
+    }
+
+    let groups: GroupData[] = overview.groups;
+    if (Object.keys(layoutOverrides).length > 0) {
+        groups = mergeGroupLayouts(groups, layoutOverrides);
+    }
+
+    const groupEdges: GroupEdgeData[] = overview.groupEdges.map((e) => ({
+        from: e.from,
+        to: e.to,
+        type: e.type,
+    }));
+
+    return { nodes: [], edges: [], groups, groupEdges };
+}
+
+function groupResponseToPayload(data: GroupNodesResponse): { nodes: NodeData[]; edges: EdgeData[] } {
+    const nodes: NodeData[] = data.nodes.map((node) => ({
+        ...node,
+        label: node.title || `Вузол ${node.id}`,
+    }));
+    const edges: EdgeData[] = data.edges.map(({ from, to }) => ({ from, to }));
+    return { nodes, edges };
+}
 
 export default function MapPage() {
     const { mapId: mapIdParam } = useParams<{ mapId: string }>();
@@ -35,10 +63,12 @@ export default function MapPage() {
     const { user, loading: authLoading, role } = useAuth();
     const isEditor = role === 'admin' || role === 'teacher';
 
-    const [mapMeta, setMapMeta] = useState<KnowledgeMap | null>(null);
+    const [mapMeta, setMapMeta] = useState<GraphEditMap | null>(null);
+    const [overview, setOverview] = useState<MapOverviewResponse | null>(null);
     const [graphPayload, setGraphPayload] = useState<GraphPayload | null>(null);
     const [progressSummary, setProgressSummary] = useState<ProgressSummary | null>(null);
-    const [loading, setLoading] = useState(true);
+    const [loadingOverview, setLoadingOverview] = useState(true);
+    const [loadingGroup, setLoadingGroup] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [activeNodeId, setActiveNodeId] = useState<number | null>(null);
     const [refresh, setRefresh] = useState(0);
@@ -48,133 +78,138 @@ export default function MapPage() {
     const [topicsById, setTopicsById] = useState<Map<number, Topic>>(new Map());
     const [searchQuery, setSearchQuery] = useState('');
     const navReadyRef = useRef(false);
+    const groupCacheRef = useRef<Map<string, GroupNodesResponse>>(new Map());
+    const pendingFocusNodeRef = useRef<number | null>(null);
+
+    const loadOverview = useCallback(async () => {
+        const [meta, overviewData] = await Promise.all([
+            graphEditMapsApi.getOne(mapId),
+            nodesApi.getMapOverview(mapId),
+        ]);
+
+        if (!isEditor && meta.status !== 'published') {
+            throw new Error('UNPUBLISHED');
+        }
+
+        groupCacheRef.current.clear();
+        setMapMeta(meta);
+        setOverview(overviewData);
+        setProgressSummary({
+            ...overviewData.progress,
+            nodes: overviewData.nodesIndex.map((n) => ({
+                id: n.id,
+                title: n.title,
+                topicId: n.topicId ?? 0,
+                status: n.status,
+                level: 0,
+                progress: n.status === 'completed' ? 1 : 0,
+            })),
+        });
+        setGraphPayload(buildOverviewPayload(overviewData));
+
+        return overviewData;
+    }, [mapId, isEditor]);
+
+    const loadGroupIntoPayload = useCallback(
+        async (groupId: string, force = false) => {
+            let cached = groupCacheRef.current.get(groupId);
+            if (!cached || force) {
+                setLoadingGroup(true);
+                try {
+                    cached = await nodesApi.getGroupNodes(mapId, groupId);
+                    groupCacheRef.current.set(groupId, cached);
+                } finally {
+                    setLoadingGroup(false);
+                }
+            }
+
+            const { nodes, edges } = groupResponseToPayload(cached);
+            setTopicsById((prev) => {
+                const next = new Map(prev);
+                for (const t of cached!.topics) {
+                    next.set(t.id, t);
+                }
+                return next;
+            });
+
+            setGraphPayload((prev) => {
+                if (!prev) return prev;
+                return { ...prev, nodes, edges };
+            });
+
+            return cached;
+        },
+        [mapId],
+    );
 
     useEffect(() => {
         if (!user || !mapId || Number.isNaN(mapId)) {
-            setLoading(false);
+            setLoadingOverview(false);
             return;
         }
 
         let cancelled = false;
-        setLoading(true);
+        setLoadingOverview(true);
         setLoadError(null);
 
-        Promise.all([
-            knowledgeMapsApi.getOne(mapId),
-            nodesApi.getGraph(mapId),
-            nodesApi.getGroupGraph(mapId).catch(() => null),
-            topicsApi.getAll().catch(() => []),
-            progressApi.getMySummary(mapId).catch(() => null),
-        ])
-            .then(([meta, data, groupMeta, topics, progress]) => {
+        loadOverview()
+            .then((overviewData) => {
                 if (cancelled) return;
-
-                if (!isEditor && meta.status !== 'published') {
-                    setLoadError('Ця карта ще не опублікована.');
-                    return;
-                }
-
-                setMapMeta(meta);
-                setProgressSummary(progress);
-                setTopicsById(new Map(topics.map((t) => [t.id, t])));
-
-                const topicById = new Map(topics.map((t) => [t.id, t]));
-
-                const nodes: NodeData[] = data.nodes.map((node) => {
-                    const topic =
-                        node.topicId != null ? topicById.get(node.topicId) : undefined;
-                    return {
-                        ...node,
-                        label: node.title || `Вузол ${node.id}`,
-                        groupId: node.groupId ?? topic?.groupId ?? null,
-                        orderInGroup: node.orderInGroup ?? topic?.orderInGroup ?? 0,
-                    };
-                });
-
-                const edges: EdgeData[] = data.edges.map(({ from, to }) => ({ from, to }));
-
-                let groups: GroupData[] =
-                    data.groups?.length ? data.groups : (groupMeta?.groups ?? []);
-                let groupEdges: GroupEdgeData[] = (
-                    data.groupEdges?.length ? data.groupEdges : (groupMeta?.groupEdges ?? [])
-                ).map((e) => ({
-                    from: e.from,
-                    to: e.to,
-                    type: e.type,
-                }));
-
-                const layoutOverrides: Record<string, { x: number; y: number }> = {};
-                for (const g of groups) {
-                    if (g.x != null && g.y != null) {
-                        layoutOverrides[g.id] = { x: Math.round(g.x), y: Math.round(g.y) };
-                    }
-                }
-                for (const [id, pos] of Object.entries(groupMeta?.groupLayout ?? {})) {
-                    layoutOverrides[id] = { x: Math.round(pos.x), y: Math.round(pos.y) };
-                }
-                if (Object.keys(layoutOverrides).length > 0) {
-                    groups = mergeGroupLayouts(groups, layoutOverrides);
-                }
-
-                if (groups.length === 0 && nodes.some((n) => n.groupId)) {
-                    groups = deriveGroupsFromNodes(nodes);
-                    groupEdges = deriveGroupEdgesFromNodes(nodes, edges);
-                } else if (groups.length > 0) {
-                    groups = filterGroupsForMap(
-                        groups,
-                        groupEdges.map((e) => ({ ...e, id: undefined })),
-                        nodes.map((n) => n.groupId),
-                    );
-                    const visibleIds = new Set(groups.map((g) => g.id));
-                    groupEdges = filterGroupEdgesForGroups(
-                        groupEdges.map((e) => ({ ...e, id: undefined })),
-                        visibleIds,
-                    );
-                }
-
-                setGraphPayload({ nodes, edges, groups, groupEdges });
-
                 if (!navReadyRef.current) {
                     navReadyRef.current = true;
                     const nav = applyStoredNavigation(
                         mapId,
                         'view',
-                        groups.map((g) => g.id),
-                        nodes.map((n) => n.id),
+                        overviewData.groups.map((g) => g.id),
+                        overviewData.nodesIndex.map((n) => n.id),
                     );
                     setViewScope(nav.viewScope);
                     setSelectedGroupId(nav.selectedGroupId);
                     setActiveNodeId(nav.activeNodeId);
-                    if (nav.activeNodeId != null && nav.viewScope === 'topics') {
-                        setTimeout(() => window.__focusGraphNode?.(nav.activeNodeId!), 300);
-                    }
+                    pendingFocusNodeRef.current = nav.activeNodeId;
                 }
             })
             .catch((e) => {
                 if (cancelled) return;
+                if (e instanceof Error && e.message === 'UNPUBLISHED') {
+                    setLoadError('Ця карта ще не опублікована.');
+                    return;
+                }
                 console.error(e);
                 setLoadError('Не вдалося завантажити карту.');
             })
             .finally(() => {
-                if (!cancelled) setLoading(false);
+                if (!cancelled) setLoadingOverview(false);
             });
 
         return () => {
             cancelled = true;
         };
-    }, [user, mapId, refresh, isEditor]);
+    }, [user, mapId, refresh, loadOverview, loadGroupIntoPayload]);
 
     useEffect(() => {
-        if (!mapId || Number.isNaN(mapId) || loading || !navReadyRef.current) return;
+        if (loadingOverview || viewScope !== 'topics' || !selectedGroupId) return;
+        void loadGroupIntoPayload(selectedGroupId).then(() => {
+            if (pendingFocusNodeRef.current != null) {
+                const nodeId = pendingFocusNodeRef.current;
+                pendingFocusNodeRef.current = null;
+                setTimeout(() => window.__focusGraphNode?.(nodeId), 300);
+            }
+        });
+    }, [loadingOverview, viewScope, selectedGroupId, loadGroupIntoPayload]);
+
+    useEffect(() => {
+        if (!mapId || Number.isNaN(mapId) || loadingOverview || !navReadyRef.current) return;
         saveStoredNavigation(navigationStorageKey(mapId, 'view'), {
             viewScope,
             selectedGroupId,
             activeNodeId,
         });
-    }, [mapId, loading, viewScope, selectedGroupId, activeNodeId]);
+    }, [mapId, loadingOverview, viewScope, selectedGroupId, activeNodeId]);
 
     useEffect(() => {
         navReadyRef.current = false;
+        groupCacheRef.current.clear();
     }, [mapId]);
 
     const groups = graphPayload?.groups ?? [];
@@ -198,13 +233,27 @@ export default function MapPage() {
         [activeNode, topicsById],
     );
 
-    const searchResults = useMemo(() => {
+    const searchResults = useMemo((): NodeData[] => {
         const q = searchQuery.trim().toLowerCase();
-        if (!q) return [];
-        return nodes
-            .filter((n) => n.title.toLowerCase().includes(q) || n.label.toLowerCase().includes(q))
-            .slice(0, 8);
-    }, [nodes, searchQuery]);
+        if (!q || !overview) return [];
+        return overview.nodesIndex
+            .filter((n) => n.title.toLowerCase().includes(q))
+            .slice(0, 8)
+            .map((n) => ({
+                id: n.id,
+                title: n.title,
+                label: n.title,
+                topicId: n.topicId,
+                groupId: n.groupId,
+                status: n.status,
+                level: 0,
+                progress: n.status === 'completed' ? 1 : 0,
+                x: null,
+                y: null,
+                globalOrder: null,
+                orderInGroup: 0,
+            }));
+    }, [searchQuery, overview]);
 
     const handleSelectGroup = (groupId: string) => {
         setSelectedGroupId(groupId);
@@ -216,6 +265,7 @@ export default function MapPage() {
         setViewScope('groups');
         setSelectedGroupId(null);
         setActiveNodeId(null);
+        setGraphPayload((prev) => (prev ? { ...prev, nodes: [], edges: [] } : prev));
     };
 
     const handleSelectNode = (id: number) => {
@@ -227,24 +277,33 @@ export default function MapPage() {
         setActiveNodeId(id);
     };
 
-    const handleSearchPick = (node: NodeData) => {
+    const handleSearchPick = async (node: NodeData) => {
         if (node.groupId) {
             setSelectedGroupId(node.groupId);
             setViewScope('topics');
+            await loadGroupIntoPayload(node.groupId);
         }
         setActiveNodeId(node.id);
         setSearchQuery('');
         setTimeout(() => window.__focusGraphNode?.(node.id), 150);
     };
 
-    const handleProgressUpdate = () => {
+    const handleProgressUpdate = async () => {
         if (!mapId || Number.isNaN(mapId)) return;
-        progressApi
-            .getMySummary(mapId)
-            .then(setProgressSummary)
-            .catch(console.error);
-        setRefresh((r) => r + 1);
+        try {
+            const overviewData = await loadOverview();
+            if (viewScope === 'topics' && selectedGroupId) {
+                await loadGroupIntoPayload(selectedGroupId, true);
+            } else {
+                setGraphPayload(buildOverviewPayload(overviewData));
+            }
+        } catch (e) {
+            console.error(e);
+            setRefresh((r) => r + 1);
+        }
     };
+
+    const loading = loadingOverview || (viewScope === 'topics' && loadingGroup && nodes.length === 0);
 
     if (authLoading) {
         return <div className="p-8 text-center opacity-60">Завантаження...</div>;
@@ -293,18 +352,22 @@ export default function MapPage() {
                 onBackToGroups={handleBackToGroups}
                 onSelectGroup={handleSelectGroup}
                 onSearchChange={setSearchQuery}
-                onSearchPick={handleSearchPick}
+                onSearchPick={(node) => void handleSearchPick(node)}
             />
 
             <div className="flex flex-1 min-h-0 overflow-hidden flex-col lg:flex-row">
                 <div className="flex-1 flex flex-col min-h-0 min-w-0">
-                    {viewScope === 'groups' && !loading && (
+                    {viewScope === 'groups' && !loadingOverview && (
                         <MapGroupsOverview groups={groups} onSelectGroup={handleSelectGroup} />
                     )}
                     <div className="flex-1 relative min-h-[320px]">
-                        {loading ? (
+                        {loadingOverview ? (
                             <div className="absolute inset-0 flex items-center justify-center opacity-60">
-                                Завантаження графу...
+                                Завантаження карти...
+                            </div>
+                        ) : loading ? (
+                            <div className="absolute inset-0 flex items-center justify-center opacity-60">
+                                Завантаження групи...
                             </div>
                         ) : (
                             <Graph
@@ -334,7 +397,7 @@ export default function MapPage() {
                         <NodeInfoPanel
                             node={activeNode}
                             topic={activeTopic}
-                            onProgressUpdate={handleProgressUpdate}
+                            onProgressUpdate={() => void handleProgressUpdate()}
                             embedded
                         />
                     </div>
@@ -345,7 +408,7 @@ export default function MapPage() {
                 <NodeInfoPanel
                     node={activeNode}
                     topic={activeTopic}
-                    onProgressUpdate={handleProgressUpdate}
+                    onProgressUpdate={() => void handleProgressUpdate()}
                     embedded
                 />
             </div>

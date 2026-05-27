@@ -1,6 +1,6 @@
 import type { GraphViewScope } from './Graph';
 
-interface GraphMapHUDProps {
+interface GraphEditHUDProps {
     viewScope: GraphViewScope;
     groupTitle: string | null;
     activeGroupTitle?: string | null;
@@ -14,7 +14,7 @@ interface GraphMapHUDProps {
     onBackToGroups?: () => void;
 }
 
-export default function GraphMapHUD({
+export default function GraphEditHUD({
     viewScope,
     groupTitle,
     activeGroupTitle = null,
@@ -26,7 +26,7 @@ export default function GraphMapHUD({
     onZoomIn,
     onZoomOut,
     onBackToGroups,
-}: GraphMapHUDProps) {
+}: GraphEditHUDProps) {
     return (
         <>
             <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg border border-base-content/10 bg-base-100/85 backdrop-blur-sm px-2.5 py-1.5 text-[10px] opacity-70 shadow-sm max-w-[220px]">

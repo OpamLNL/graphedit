@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
-import { knowledgeMapsApi, type KnowledgeMap } from '../api/knowledgeMaps';
+import { graphEditMapsApi, type GraphEditMap } from '../api/graphEditMaps';
 import MapGraphValidationBadge from '../components/MapGraphValidationBadge';
 import { useAuth } from '../context/AuthContext';
 import { apiErrorMessage } from '../utils/apiErrorMessage';
 
 export default function MapsPage() {
     const { user, loading: authLoading, token } = useAuth();
-    const [maps, setMaps] = useState<KnowledgeMap[]>([]);
+    const [maps, setMaps] = useState<GraphEditMap[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -24,8 +24,12 @@ export default function MapsPage() {
         setLoading(true);
         setError(null);
 
-        knowledgeMapsApi
-            .list()
+        user
+            .getIdToken()
+            .then((freshToken) => {
+                localStorage.setItem('token', freshToken);
+                return graphEditMapsApi.list();
+            })
             .then((data) => {
                 if (cancelled) return;
                 setMaps(data);
@@ -90,7 +94,7 @@ export default function MapsPage() {
     );
 }
 
-function CatalogMapCard({ map }: { map: KnowledgeMap }) {
+function CatalogMapCard({ map }: { map: GraphEditMap }) {
     const updated = new Date(map.updatedAt).toLocaleDateString('uk-UA');
 
     return (

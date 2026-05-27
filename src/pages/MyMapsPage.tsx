@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
-import { knowledgeMapsApi, type KnowledgeMap } from '../api/knowledgeMaps';
+import { graphEditMapsApi, type GraphEditMap } from '../api/graphEditMaps';
 import { useAuth } from '../context/AuthContext';
 import { apiErrorMessage } from '../utils/apiErrorMessage';
 import MapGraphValidationBadge from '../components/MapGraphValidationBadge';
 
 export default function MyMapsPage() {
     const { user, role, loading: authLoading, token } = useAuth();
-    const [maps, setMaps] = useState<KnowledgeMap[]>([]);
+    const [maps, setMaps] = useState<GraphEditMap[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [creating, setCreating] = useState(false);
@@ -31,7 +31,7 @@ export default function MyMapsPage() {
         setLoading(true);
         setError(null);
 
-        knowledgeMapsApi
+        graphEditMapsApi
             .listMine()
             .then((data) => {
                 if (cancelled) return;
@@ -56,7 +56,7 @@ export default function MyMapsPage() {
         setCreating(true);
         setError(null);
         try {
-            const map = await knowledgeMapsApi.create({
+            const map = await graphEditMapsApi.create({
                 title: newTitle.trim(),
                 description: newDesc.trim() || undefined,
             });
@@ -72,7 +72,7 @@ export default function MyMapsPage() {
         }
     };
 
-    const handleDelete = async (map: KnowledgeMap) => {
+    const handleDelete = async (map: GraphEditMap) => {
         const confirmed = window.confirm(
             `Видалити карту «${map.title}»?\n\nУсі вузли, зображення та прогрес по цій карті буде втрачено.`,
         );
@@ -81,7 +81,7 @@ export default function MyMapsPage() {
         setDeletingId(map.id);
         setError(null);
         try {
-            await knowledgeMapsApi.remove(map.id);
+            await graphEditMapsApi.remove(map.id);
             setMaps((prev) => prev.filter((m) => m.id !== map.id));
         } catch (e) {
             setError(apiErrorMessage(e, 'Не вдалося видалити карту'));
@@ -216,7 +216,7 @@ function MapCard({
     deleting,
     onDelete,
 }: {
-    map: KnowledgeMap;
+    map: GraphEditMap;
     canEdit: boolean;
     canDelete: boolean;
     deleting: boolean;

@@ -159,6 +159,9 @@ export default function NodeContentSection({
                         className="textarea textarea-bordered textarea-sm w-full min-h-[120px] text-sm"
                         placeholder="Текст теорії для цього вузла..."
                         value={theoryDraft}
+                        spellCheck={false}
+                        autoCorrect="off"
+                        autoCapitalize="off"
                         onChange={(e) => setTheoryDraft(e.target.value)}
                         onPaste={handlePasteImage}
                     />
