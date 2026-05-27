@@ -2,11 +2,28 @@ import { useState } from 'react';
 import type { NodeData } from '../Graph/Graph';
 import type { Topic } from '../../api/topics';
 import { progressApi } from '../../api/progress';
+import { ApiError } from '../../api/client';
 import NodeContentSection from '../NodeContentSection/NodeContentSection';
+
+function parseApiError(e: unknown): string {
+    if (e instanceof ApiError) {
+        try {
+            const body = JSON.parse(e.message) as { message?: string | string[] };
+            if (Array.isArray(body.message)) return body.message.join(', ');
+            if (body.message) return body.message;
+        } catch {
+            /* plain text */
+        }
+        return e.message;
+    }
+    if (e instanceof Error) return e.message;
+    return 'Не вдалося зберегти прогрес';
+}
 
 interface NodeInfoPanelProps {
     node: NodeData | null;
     topic?: Topic | null;
+    mapId?: number;
     onProgressUpdate?: () => void;
     embedded?: boolean;
 }
@@ -14,23 +31,37 @@ interface NodeInfoPanelProps {
 export default function NodeInfoPanel({
     node,
     topic: topicProp,
+    mapId,
     onProgressUpdate,
     embedded = false,
 }: NodeInfoPanelProps) {
     const [marking, setMarking] = useState(false);
+    const [markError, setMarkError] = useState<string | null>(null);
 
     const handleMarkAsLearned = async () => {
-        if (!node?.topicId) return;
+        if (!node || mapId == null || Number.isNaN(mapId)) return;
         setMarking(true);
+        setMarkError(null);
         try {
-            await progressApi.markTopicComplete(node.topicId);
+            await progressApi.markTopicComplete({
+                mapId,
+                topicId: node.topicId,
+                nodeId: node.id,
+            });
             await onProgressUpdate?.();
         } catch (err) {
             console.error('Помилка збереження прогресу:', err);
+            setMarkError(parseApiError(err));
         } finally {
             setMarking(false);
         }
     };
+
+    const canMarkProgress =
+        node?.status === 'available' &&
+        mapId != null &&
+        !Number.isNaN(mapId) &&
+        (node.topicId != null || node.groupId != null);
 
     return (
         <div
@@ -45,7 +76,7 @@ export default function NodeInfoPanel({
                     <p className="italic text-sm opacity-60">Оберіть вузол, щоб побачити інформацію</p>
                 ) : (
                     <>
-                        {node.status === 'available' && (
+                        {node.status === 'available' && canMarkProgress && (
                             <button
                                 onClick={handleMarkAsLearned}
                                 disabled={marking}
@@ -55,10 +86,20 @@ export default function NodeInfoPanel({
                             </button>
                         )}
 
+                        {node.status === 'available' && !canMarkProgress && (
+                            <p className="text-sm text-warning mb-4">
+                                Прогрес для цього вузла недоступний (немає групи або карти).
+                            </p>
+                        )}
+
                         {node.status === 'completed' && (
                             <button disabled className="btn btn-primary mb-4 w-full">
                                 ✔ Вивчено
                             </button>
+                        )}
+
+                        {markError && (
+                            <p className="text-sm text-error mb-3">{markError}</p>
                         )}
 
                         {node.status === 'locked' && (

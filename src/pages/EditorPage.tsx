@@ -46,6 +46,7 @@ import {
 import { nodesApi } from '../api/nodes';
 import { topicsApi, type Topic } from '../api/topics';
 import { ApiError } from '../api/client';
+import { remapImportJsonGroupIds } from '../utils/importJsonRemap';
 import { useAuth } from '../context/AuthContext';
 import MapGraphValidationBadge from '../components/MapGraphValidationBadge';
 import { isMapGraphNotValidated } from '../utils/mapValidation';
@@ -595,7 +596,7 @@ export default function EditorPage() {
             );
 
             const result = await graphEditMapsApi.importJson(mapId, {
-                ...parsed,
+                ...remapImportJsonGroupIds(parsed),
                 importMode: replace ? 'replace' : 'merge',
             });
 

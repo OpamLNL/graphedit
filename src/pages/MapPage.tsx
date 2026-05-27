@@ -397,6 +397,7 @@ export default function MapPage() {
                         <NodeInfoPanel
                             node={activeNode}
                             topic={activeTopic}
+                            mapId={mapId}
                             onProgressUpdate={() => void handleProgressUpdate()}
                             embedded
                         />
@@ -408,6 +409,7 @@ export default function MapPage() {
                 <NodeInfoPanel
                     node={activeNode}
                     topic={activeTopic}
+                    mapId={mapId}
                     onProgressUpdate={() => void handleProgressUpdate()}
                     embedded
                 />

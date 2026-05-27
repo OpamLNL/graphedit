@@ -34,9 +34,13 @@ export const progressApi = {
         return apiFetch<ProgressSummary>(`/progress/me/summary${q}`);
     },
 
-    markTopicComplete: (topicId: number) =>
+    markTopicComplete: (payload: { mapId: number; topicId?: number | null; nodeId: number }) =>
         apiFetch('/progress/me', {
             method: 'POST',
-            body: JSON.stringify({ topicId }),
+            body: JSON.stringify({
+                mapId: payload.mapId,
+                ...(payload.topicId != null ? { topicId: payload.topicId } : {}),
+                nodeId: payload.nodeId,
+            }),
         }),
 };

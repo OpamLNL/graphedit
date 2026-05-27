@@ -734,7 +734,7 @@ export default function Graph({
         onNodeClickRef.current?.(nodeId);
         highlightTopicNode(nodeId);
         if (!editModeRef.current) {
-            focusNodeById(nodeId, false);
+            focusNodeById(nodeId, true);
             localStorage.setItem('lastFocusedNodeId', nodeId.toString());
         }
     };
@@ -1115,7 +1115,7 @@ export default function Graph({
 
         window.__focusGraphNode = (id: number) => {
             activeNodeIdRef.current = id;
-            focusNodeById(id, false);
+            focusNodeById(id, true);
         };
         window.__fitGraphView = () => fitView();
 
