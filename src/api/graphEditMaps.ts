@@ -16,6 +16,37 @@ export interface MapListAuthor {
     displayName: string;
 }
 
+export interface MapListEngagement {
+    averageRating: number | null;
+    ratingsCount: number;
+    favoritesCount: number;
+    myRating: number | null;
+    isFavorite: boolean;
+    favoritedAt: string | null;
+}
+
+export type MapCatalogSortBy =
+    | 'title'
+    | 'updatedAt'
+    | 'publishedAt'
+    | 'createdAt'
+    | 'rating'
+    | 'favorites'
+    | 'favoritedAt';
+
+export type MapCatalogSortOrder = 'asc' | 'desc';
+
+export interface MapCatalogQuery {
+    search?: string;
+    favoritesOnly?: boolean;
+    minRating?: number;
+    authorId?: number;
+    status?: 'draft' | 'published';
+    validatedOnly?: boolean;
+    sortBy?: MapCatalogSortBy;
+    sortOrder?: MapCatalogSortOrder;
+}
+
 export interface GraphEditMap {
     id: number;
     title: string;
@@ -29,6 +60,7 @@ export interface GraphEditMap {
     /** Заповнюється в list / listMine */
     author: MapListAuthor;
     myProgress?: MapListProgress | null;
+    engagement?: MapListEngagement;
 }
 
 export interface EditorGraphNode {
@@ -217,12 +249,45 @@ export interface MapRevision {
     createdAt: string;
 }
 
+function buildCatalogQuery(params?: MapCatalogQuery): string {
+    if (!params) return '';
+    const qs = new URLSearchParams();
+    if (params.search?.trim()) qs.set('search', params.search.trim());
+    if (params.favoritesOnly) qs.set('favoritesOnly', 'true');
+    if (params.minRating != null) qs.set('minRating', String(params.minRating));
+    if (params.authorId != null) qs.set('authorId', String(params.authorId));
+    if (params.status) qs.set('status', params.status);
+    if (params.validatedOnly) qs.set('validatedOnly', 'true');
+    if (params.sortBy) qs.set('sortBy', params.sortBy);
+    if (params.sortOrder) qs.set('sortOrder', params.sortOrder);
+    const s = qs.toString();
+    return s ? `?${s}` : '';
+}
+
 export const graphEditMapsApi = {
     /** Каталог: усі опубліковані карти */
-    list: () => apiFetch<GraphEditMap[]>('/graph-edit-maps'),
+    list: (params?: MapCatalogQuery) =>
+        apiFetch<GraphEditMap[]>(`/graph-edit-maps${buildCatalogQuery(params)}`),
 
     /** Мої карти: створені + з прогресом проходження */
-    listMine: () => apiFetch<GraphEditMap[]>('/graph-edit-maps/mine'),
+    listMine: (params?: MapCatalogQuery) =>
+        apiFetch<GraphEditMap[]>(`/graph-edit-maps/mine${buildCatalogQuery(params)}`),
+
+    /** Улюблені опубліковані карти */
+    listFavorites: (params?: MapCatalogQuery) =>
+        apiFetch<GraphEditMap[]>(`/graph-edit-maps/favorites${buildCatalogQuery(params)}`),
+
+    setFavorite: (id: number, favorite: boolean) =>
+        apiFetch<MapListEngagement>(`/graph-edit-maps/${id}/favorite`, {
+            method: 'PUT',
+            body: JSON.stringify({ favorite }),
+        }),
+
+    setRating: (id: number, rating: number | null) =>
+        apiFetch<MapListEngagement>(`/graph-edit-maps/${id}/rating`, {
+            method: 'PUT',
+            body: JSON.stringify({ rating }),
+        }),
 
     getOne: (id: number) => apiFetch<GraphEditMap>(`/graph-edit-maps/${id}`),
 

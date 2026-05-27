@@ -15,6 +15,7 @@ import AdminPage from './pages/admin/AdminPage.tsx';
 import TeachingStatsPage from './pages/teaching/TeachingStatsPage';
 import TeachingUsersPage from './pages/teaching/TeachingUsersPage';
 import MapLearnersPage from './pages/teaching/MapLearnersPage';
+import FavoritesPage from './pages/Favorites';
 import UserPublicProfilePage from './pages/UserPublicProfilePage';
 
 function App() {
@@ -25,6 +26,7 @@ function App() {
                 <Routes>
                     <Route path="/" element={<Home />} />
                     <Route path="/maps" element={<MapsPage />} />
+                    <Route path="/favorites" element={<FavoritesPage />} />
                     <Route path="/my-maps" element={<MyMapsPage />} />
                     <Route path="/map/:mapId" element={<Map />} />
                     <Route path="/map" element={<Navigate to="/maps" replace />} />

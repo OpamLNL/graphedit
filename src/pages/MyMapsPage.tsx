@@ -1,16 +1,29 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { graphEditMapsApi, type GraphEditMap } from '../api/graphEditMaps';
 import { useAuth } from '../context/AuthContext';
 import { apiErrorMessage } from '../utils/apiErrorMessage';
 import MapGraphValidationBadge from '../components/MapGraphValidationBadge';
 import MapCardMeta from '../components/MapCard/MapCardMeta';
+import MapCatalogToolbar from '../components/MapCatalog/MapCatalogToolbar';
+import MapRatingStars from '../components/MapCatalog/MapRatingStars';
+import MapFavoriteButton from '../components/MapCatalog/MapFavoriteButton';
+import { useMapCatalogList } from '../hooks/useMapCatalogList';
 
 export default function MyMapsPage() {
-    const { user, role, loading: authLoading, token } = useAuth();
-    const [maps, setMaps] = useState<GraphEditMap[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const { user, role, loading: authLoading } = useAuth();
+    const {
+        query,
+        setQuery,
+        allMaps,
+        maps,
+        loading,
+        error,
+        refetch,
+        handleFavorite,
+        handleRate,
+    } = useMapCatalogList('mine');
+    const [actionError, setActionError] = useState<string | null>(null);
     const [creating, setCreating] = useState(false);
     const [deletingId, setDeletingId] = useState<number | null>(null);
     const [showCreate, setShowCreate] = useState(false);
@@ -19,55 +32,22 @@ export default function MyMapsPage() {
 
     const isEditor = role === 'admin' || role === 'teacher';
 
-    useEffect(() => {
-        if (authLoading) return;
-
-        if (!user || !token) {
-            setMaps([]);
-            setLoading(false);
-            return;
-        }
-
-        let cancelled = false;
-        setLoading(true);
-        setError(null);
-
-        graphEditMapsApi
-            .listMine()
-            .then((data) => {
-                if (cancelled) return;
-                setMaps(data);
-                setError(null);
-            })
-            .catch((e) => {
-                if (cancelled) return;
-                setError(apiErrorMessage(e, 'Не вдалося завантажити карти'));
-            })
-            .finally(() => {
-                if (!cancelled) setLoading(false);
-            });
-
-        return () => {
-            cancelled = true;
-        };
-    }, [user, authLoading, token]);
-
     const handleCreate = async () => {
         if (!newTitle.trim()) return;
         setCreating(true);
-        setError(null);
+        setActionError(null);
         try {
             const map = await graphEditMapsApi.create({
                 title: newTitle.trim(),
                 description: newDesc.trim() || undefined,
             });
-            setMaps((prev) => [map, ...prev]);
+            await refetch();
             setShowCreate(false);
             setNewTitle('');
             setNewDesc('');
             window.location.href = `/editor/${map.id}`;
         } catch (e) {
-            setError(apiErrorMessage(e, 'Не вдалося створити карту'));
+            setActionError(apiErrorMessage(e, 'Не вдалося створити карту'));
         } finally {
             setCreating(false);
         }
@@ -80,12 +60,12 @@ export default function MyMapsPage() {
         if (!confirmed) return;
 
         setDeletingId(map.id);
-        setError(null);
+        setActionError(null);
         try {
             await graphEditMapsApi.remove(map.id);
-            setMaps((prev) => prev.filter((m) => m.id !== map.id));
+            await refetch();
         } catch (e) {
-            setError(apiErrorMessage(e, 'Не вдалося видалити карту'));
+            setActionError(apiErrorMessage(e, 'Не вдалося видалити карту'));
         } finally {
             setDeletingId(null);
         }
@@ -120,12 +100,19 @@ export default function MyMapsPage() {
                 )}
             </div>
 
+            <MapCatalogToolbar
+                query={query}
+                onChange={setQuery}
+                maps={allMaps}
+                showStatusFilter
+            />
+
             {loading && (
                 <div className="text-center py-16 opacity-50">Завантаження карт...</div>
             )}
 
-            {error && (
-                <div className="alert alert-error text-sm">{error}</div>
+            {(error || actionError) && (
+                <div className="alert alert-error text-sm">{error || actionError}</div>
             )}
 
             {!loading && !error && maps.length === 0 && (
@@ -165,6 +152,8 @@ export default function MyMapsPage() {
                                 canDelete={isOwner}
                                 deleting={deletingId === map.id}
                                 onDelete={() => void handleDelete(map)}
+                                onFavorite={map.status === 'published' ? handleFavorite : undefined}
+                                onRate={map.status === 'published' ? handleRate : undefined}
                             />
                         );
                     })}
@@ -223,6 +212,8 @@ function MapCard({
     canDelete,
     deleting,
     onDelete,
+    onFavorite,
+    onRate,
 }: {
     map: GraphEditMap;
     currentUserUid: string;
@@ -230,6 +221,8 @@ function MapCard({
     canDelete: boolean;
     deleting: boolean;
     onDelete: () => void;
+    onFavorite?: (mapId: number, favorite: boolean) => Promise<void>;
+    onRate?: (mapId: number, rating: number | null) => Promise<void>;
 }) {
     const navigate = useNavigate();
     const updated = new Date(map.updatedAt).toLocaleDateString('uk-UA');
@@ -255,6 +248,22 @@ function MapCard({
 
                 {map.description && (
                     <p className="text-xs opacity-55 line-clamp-2">{map.description}</p>
+                )}
+
+                {map.status === 'published' && (onFavorite || onRate) && (
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <MapRatingStars
+                            mapId={map.id}
+                            engagement={map.engagement}
+                            interactive={!!onRate}
+                            onRate={onRate}
+                        />
+                        <MapFavoriteButton
+                            mapId={map.id}
+                            engagement={map.engagement}
+                            onToggle={onFavorite}
+                        />
+                    </div>
                 )}
 
                 <MapCardMeta map={map} currentUserUid={currentUserUid} />

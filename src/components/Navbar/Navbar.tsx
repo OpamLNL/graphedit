@@ -15,6 +15,8 @@ type NavLink = {
 export const navLinks: NavLink[] = [
     { path: '/', label: 'Головна' },
     { path: '/maps', label: 'Карти', authOnly: true },
+    { path: '/favorites', label: 'Улюблені', authOnly: true },
+    { path: '/my-maps', label: 'Мої карти', authOnly: true },
     { path: '/teaching', label: 'Статистика', authOnly: true, editorOnly: true },
     { path: '/topics', label: 'Теми' },
     { path: '/profile', label: 'Кабінет', authOnly: true },
