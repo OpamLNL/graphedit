@@ -1,5 +1,20 @@
 import { apiFetch } from './client';
 
+export interface MapListProgress {
+    total: number;
+    completed: number;
+    available: number;
+    locked: number;
+    percent: number;
+}
+
+export interface MapListAuthor {
+    uid: string;
+    name: string | null;
+    email: string | null;
+    displayName: string;
+}
+
 export interface GraphEditMap {
     id: number;
     title: string;
@@ -10,6 +25,9 @@ export interface GraphEditMap {
     createdAt: string;
     updatedAt: string;
     publishedAt: string | null;
+    /** Заповнюється в list / listMine */
+    author: MapListAuthor;
+    myProgress?: MapListProgress | null;
 }
 
 export interface EditorGraphNode {

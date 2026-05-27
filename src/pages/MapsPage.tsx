@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { graphEditMapsApi, type GraphEditMap } from '../api/graphEditMaps';
 import MapGraphValidationBadge from '../components/MapGraphValidationBadge';
+import MapCardMeta from '../components/MapCard/MapCardMeta';
 import { useAuth } from '../context/AuthContext';
 import { apiErrorMessage } from '../utils/apiErrorMessage';
 
@@ -86,7 +87,7 @@ export default function MapsPage() {
             {!loading && maps.length > 0 && (
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {maps.map((map) => (
-                        <CatalogMapCard key={map.id} map={map} />
+                        <CatalogMapCard key={map.id} map={map} currentUserUid={user.uid} />
                     ))}
                 </div>
             )}
@@ -94,7 +95,13 @@ export default function MapsPage() {
     );
 }
 
-function CatalogMapCard({ map }: { map: GraphEditMap }) {
+function CatalogMapCard({
+    map,
+    currentUserUid,
+}: {
+    map: GraphEditMap;
+    currentUserUid: string;
+}) {
     const updated = new Date(map.updatedAt).toLocaleDateString('uk-UA');
 
     return (
@@ -110,6 +117,8 @@ function CatalogMapCard({ map }: { map: GraphEditMap }) {
             {map.description && (
                 <p className="text-xs opacity-55 line-clamp-2">{map.description}</p>
             )}
+
+            <MapCardMeta map={map} currentUserUid={currentUserUid} />
 
             <p className="text-[10px] opacity-40">Оновлено {updated}</p>
 

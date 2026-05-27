@@ -4,6 +4,7 @@ import { graphEditMapsApi, type GraphEditMap } from '../api/graphEditMaps';
 import { useAuth } from '../context/AuthContext';
 import { apiErrorMessage } from '../utils/apiErrorMessage';
 import MapGraphValidationBadge from '../components/MapGraphValidationBadge';
+import MapCardMeta from '../components/MapCard/MapCardMeta';
 
 export default function MyMapsPage() {
     const { user, role, loading: authLoading, token } = useAuth();
@@ -154,6 +155,7 @@ export default function MyMapsPage() {
                             <MapCard
                                 key={map.id}
                                 map={map}
+                                currentUserUid={user.uid}
                                 canEdit={isOwner}
                                 canDelete={isOwner}
                                 deleting={deletingId === map.id}
@@ -211,12 +213,14 @@ export default function MyMapsPage() {
 
 function MapCard({
     map,
+    currentUserUid,
     canEdit,
     canDelete,
     deleting,
     onDelete,
 }: {
     map: GraphEditMap;
+    currentUserUid: string;
     canEdit: boolean;
     canDelete: boolean;
     deleting: boolean;
@@ -247,6 +251,8 @@ function MapCard({
                 {map.description && (
                     <p className="text-xs opacity-55 line-clamp-2">{map.description}</p>
                 )}
+
+                <MapCardMeta map={map} currentUserUid={currentUserUid} />
 
                 <p className="text-[10px] opacity-40">Оновлено {updated}</p>
             </Link>
