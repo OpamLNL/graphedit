@@ -109,9 +109,14 @@ export default function MyMapsPage() {
                     </p>
                 </div>
                 {isEditor && (
-                    <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}>
-                        + Нова карта
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                        <Link to="/teaching" className="btn btn-outline btn-sm">
+                            Статистика
+                        </Link>
+                        <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}>
+                            + Нова карта
+                        </button>
+                    </div>
                 )}
             </div>
 
@@ -261,6 +266,11 @@ function MapCard({
                 {canView && (
                     <Link to={`/map/${map.id}`} className="btn btn-outline btn-sm flex-1">
                         Переглянути
+                    </Link>
+                )}
+                {canEdit && map.status === 'published' && map.ownerUid === currentUserUid && (
+                    <Link to={`/teaching/maps/${map.id}`} className="btn btn-ghost btn-sm shrink-0">
+                        Учні
                     </Link>
                 )}
                 {canEdit && (

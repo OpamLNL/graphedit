@@ -12,6 +12,9 @@ import Contact from './pages/Contact';
 import ProfilePage from './pages/ProfilePage';
 import Login from './pages/Login';
 import AdminPage from './pages/admin/AdminPage.tsx';
+import TeachingStatsPage from './pages/teaching/TeachingStatsPage';
+import TeachingUsersPage from './pages/teaching/TeachingUsersPage';
+import MapLearnersPage from './pages/teaching/MapLearnersPage';
 
 function App() {
     return (
@@ -30,6 +33,9 @@ function App() {
                     <Route path="/about" element={<About />} />
                     <Route path="/contact" element={<Contact />} />
                     <Route path="/profile" element={<ProfilePage />} />
+                    <Route path="/teaching" element={<TeachingStatsPage />} />
+                    <Route path="/teaching/users" element={<TeachingUsersPage />} />
+                    <Route path="/teaching/maps/:mapId" element={<MapLearnersPage />} />
                     <Route path="/progress" element={<Navigate to="/profile" replace />} />
                     <Route path="/login" element={<Login />} />
                     <Route path="/admin/adminPage" element={<AdminPage />} />

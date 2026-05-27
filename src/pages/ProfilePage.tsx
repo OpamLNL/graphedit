@@ -285,11 +285,16 @@ export default function ProfilePage() {
                         <Link to="/my-maps" className="btn btn-primary btn-sm">
                             Мої карти
                         </Link>
-                        {isEditor && (
-                            <Link to="/my-maps" className="btn btn-outline btn-sm">
-                                + Нова карта
-                            </Link>
-                        )}
+                {isEditor && (
+                    <>
+                        <Link to="/teaching" className="btn btn-outline btn-sm">
+                            Статистика
+                        </Link>
+                        <Link to="/my-maps" className="btn btn-outline btn-sm">
+                            + Нова карта
+                        </Link>
+                    </>
+                )}
                     </div>
                 </div>
             </section>
@@ -305,12 +310,24 @@ export default function ProfilePage() {
 
             {showTeachingStats && ownedPublishedWithStats.length > 0 && (
                 <section className="mb-8">
-                    <h2 className="font-display text-xl font-bold mb-2">
-                        Проходження студентами
-                    </h2>
-                    <p className="text-sm opacity-55 mb-4">
-                        Статистика по опублікованих картах, які ви створили
-                    </p>
+                    <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
+                        <div>
+                            <h2 className="font-display text-xl font-bold mb-2">
+                                Проходження студентами
+                            </h2>
+                            <p className="text-sm opacity-55">
+                                Статистика по опублікованих картах, які ви створили
+                            </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            <Link to="/teaching" className="btn btn-outline btn-sm">
+                                Детальна статистика
+                            </Link>
+                            <Link to="/teaching/users" className="btn btn-ghost btn-sm">
+                                Усі учні
+                            </Link>
+                        </div>
+                    </div>
                     <div className="glass-card overflow-x-auto">
                         <table className="table table-sm w-full">
                             <thead>
@@ -321,6 +338,7 @@ export default function ProfilePage() {
                                     <th className="text-center">Сер. прогрес</th>
                                     <th className="text-center">Завершили</th>
                                     <th className="text-center">В процесі</th>
+                                    <th />
                                 </tr>
                             </thead>
                             <tbody>
@@ -350,6 +368,14 @@ export default function ProfilePage() {
                                             </td>
                                             <td className="text-center text-sm">
                                                 {ts.completionDistribution.inProgress}
+                                            </td>
+                                            <td className="text-right">
+                                                <Link
+                                                    to={`/teaching/maps/${map.id}`}
+                                                    className="btn btn-ghost btn-xs"
+                                                >
+                                                    Учні →
+                                                </Link>
                                             </td>
                                         </tr>
                                     );
@@ -611,6 +637,11 @@ function MapProgressCard({
                 {canView && (
                     <Link to={`/map/${map.id}`} className="btn btn-outline btn-sm flex-1">
                         {hasStoredNav ? 'Продовжити' : 'Переглянути'}
+                    </Link>
+                )}
+                {canEdit && map.status === 'published' && isOwner && (
+                    <Link to={`/teaching/maps/${map.id}`} className="btn btn-ghost btn-sm flex-1">
+                        Учні
                     </Link>
                 )}
                 {canEdit && (

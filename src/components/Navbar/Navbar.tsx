@@ -15,6 +15,7 @@ type NavLink = {
 export const navLinks: NavLink[] = [
     { path: '/', label: 'Головна' },
     { path: '/maps', label: 'Карти', authOnly: true },
+    { path: '/teaching', label: 'Статистика', authOnly: true, editorOnly: true },
     { path: '/topics', label: 'Теми' },
     { path: '/profile', label: 'Кабінет', authOnly: true },
     { path: '/admin/adminPage', label: 'Адмін', adminOnly: true },
@@ -72,7 +73,9 @@ export default function Navbar() {
 
                     <nav className="hidden lg:flex items-center gap-0.5">
                         {filteredLinks.map(({ path, label }) => {
-                            const active = location.pathname === path;
+                            const active =
+                                location.pathname === path ||
+                                (path === '/teaching' && location.pathname.startsWith('/teaching'));
                             return (
                                 <Link
                                     key={path}

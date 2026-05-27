@@ -7,15 +7,17 @@ interface MapCardMetaProps {
 
 function resolveAuthorLabel(map: GraphEditMap, currentUserUid?: string | null): string {
     const uid = map.author?.uid || map.ownerUid;
-    if (uid && currentUserUid && uid === currentUserUid) {
+    const displayName = map.author?.displayName?.trim();
+    const isOwnMap = Boolean(uid && currentUserUid && uid === currentUserUid);
+
+    if (displayName && displayName !== 'Невідомий автор') {
+        return isOwnMap ? `${displayName} (ви)` : displayName;
+    }
+
+    if (isOwnMap) {
         return 'Ви (автор)';
     }
-    if (map.author?.displayName) {
-        return map.author.displayName;
-    }
-    if (map.ownerUid && currentUserUid && map.ownerUid === currentUserUid) {
-        return 'Ви (автор)';
-    }
+
     return 'Невідомий автор';
 }
 

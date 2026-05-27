@@ -72,6 +72,77 @@ export interface CabinetData {
     }[];
 }
 
+export type LearnerProgressStatus = 'not_started' | 'in_progress' | 'completed';
+
+export interface MapLearnerRow {
+    uid: string;
+    name: string;
+    email: string;
+    role: string;
+    completed: number;
+    total: number;
+    available: number;
+    locked: number;
+    percent: number;
+    status: LearnerProgressStatus;
+}
+
+export interface TeachingOverviewMap {
+    id: number;
+    title: string;
+    description: string | null;
+    status: 'draft' | 'published';
+    updatedAt: string;
+    publishedAt: string | null;
+    teachingStats: CabinetMapTeachingStats;
+}
+
+export interface TeachingOverviewData {
+    summary: CabinetTeachingSummary;
+    maps: TeachingOverviewMap[];
+}
+
+export interface MapLearnersDetailData {
+    map: {
+        id: number;
+        title: string;
+        description: string | null;
+        status: 'draft' | 'published';
+        publishedAt: string | null;
+        updatedAt: string;
+    };
+    teachingStats: CabinetMapTeachingStats;
+    learners: MapLearnerRow[];
+}
+
+export interface TeachingLearnerMapProgress {
+    mapId: number;
+    mapTitle: string;
+    completed: number;
+    total: number;
+    percent: number;
+    status: LearnerProgressStatus;
+}
+
+export interface TeachingLearnerRow {
+    uid: string;
+    name: string;
+    email: string;
+    role: string;
+    mapsCount: number;
+    averagePercent: number;
+    maps: TeachingLearnerMapProgress[];
+}
+
+export interface TeachingLearnersData {
+    summary: {
+        totalLearners: number;
+        activeLearners: number;
+        publishedMaps: number;
+    };
+    learners: TeachingLearnerRow[];
+}
+
 export interface UserRecord {
     id: number;
     email: string;
@@ -86,6 +157,13 @@ export const usersApi = {
     me: () => apiFetch<MeResponse>('/users/me'),
 
     getCabinet: () => apiFetch<CabinetData>('/users/me/cabinet'),
+
+    getTeachingOverview: () => apiFetch<TeachingOverviewData>('/users/me/teaching/overview'),
+
+    getTeachingLearners: () => apiFetch<TeachingLearnersData>('/users/me/teaching/learners'),
+
+    getMapLearners: (mapId: number) =>
+        apiFetch<MapLearnersDetailData>(`/users/me/teaching/maps/${mapId}/learners`),
 
     uploadAvatar: (file: File) => {
         const form = new FormData();
