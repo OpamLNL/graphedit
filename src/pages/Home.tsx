@@ -1,15 +1,40 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { loginWithGoogle } from '../api';
+import { platformApi, type PlatformStats } from '../api/platform';
 import HeroGraph from '../components/Graph/HeroGraph';
-const PROMO_STATS = [
-    { value: '532+', label: 'вузлів у графі', sub: 'програмовані теми' },
-    { value: '996+', label: 'зв\'язків', sub: 'DAG-структура' },
-    { value: '521', label: 'тем контенту', sub: 'з описами' },
-    { value: '∞', label: 'версій', sub: 'історія змін' },
-];
+
+function formatStat(n: number | undefined): string {
+    if (n === undefined) return '—';
+    return n.toLocaleString('uk-UA');
+}
+
+function buildPromoStats(stats: PlatformStats | null) {
+    return [
+        {
+            value: formatStat(stats?.nodes),
+            label: 'вузлів у графах',
+            sub: 'у базі даних',
+        },
+        {
+            value: formatStat(stats?.edges),
+            label: "зв'язків",
+            sub: 'DAG-структура',
+        },
+        {
+            value: formatStat(stats?.topics),
+            label: 'тем контенту',
+            sub: 'з описами',
+        },
+        {
+            value: formatStat(stats?.revisions),
+            label: 'збережених версій',
+            sub: 'історія змін',
+        },
+    ];
+}
 
 const EDITOR_FEATURES = [
     {
@@ -24,8 +49,8 @@ const EDITOR_FEATURES = [
     },
     {
         icon: '📦',
-        title: 'Bulk save',
-        desc: 'Збереження всього графа одним запитом — nodes, edges, видалення.',
+        title: 'Масове збереження',
+        desc: 'Збереження всього графа одним запитом — вузли, ребра, групи.',
     },
     {
         icon: '🕐',
@@ -39,8 +64,8 @@ const EDITOR_FEATURES = [
     },
     {
         icon: '📊',
-        title: 'Аналітика',
-        desc: 'Прогрес студентів, % завершення, dashboard для адміністратора.',
+        title: 'Прогрес і адмін-панель',
+        desc: 'Особистий прогрес у кабінеті та загальна панель адміністратора (користувачі, карти, % завершення).',
     },
 ];
 
@@ -54,8 +79,34 @@ export default function Home() {
     const { user, role, profileName } = useAuth();
     const { theme } = useTheme();
     const [loginLoading, setLoginLoading] = useState(false);
+    const [platformStats, setPlatformStats] = useState<PlatformStats | null>(null);
+    const [statsLoading, setStatsLoading] = useState(true);
 
     const landingClass = theme === 'dark' ? 'landing-dark' : 'landing-light';
+    const promoStats = buildPromoStats(platformStats);
+
+    const analyticsDesc = platformStats
+        ? `Кабінет студента з прогресом; адмін-dashboard: ${formatStat(platformStats.studentsWithProgress)} корист. з активністю, ${formatStat(platformStats.publishedMaps)} опублікованих карт, середнє завершення ${platformStats.averageCompletionPercent}%.`
+        : 'Особистий прогрес у кабінеті та загальна панель адміністратора (користувачі, карти, % завершення).';
+
+    useEffect(() => {
+        let cancelled = false;
+        setStatsLoading(true);
+        platformApi
+            .getStats()
+            .then((data) => {
+                if (!cancelled) setPlatformStats(data);
+            })
+            .catch(() => {
+                if (!cancelled) setPlatformStats(null);
+            })
+            .finally(() => {
+                if (!cancelled) setStatsLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     const handleGoogleLogin = async () => {
         setLoginLoading(true);
@@ -137,7 +188,9 @@ export default function Home() {
                             <div className="flex gap-2 mt-2 px-1">
                                 <span className="badge badge-primary badge-sm">draft</span>
                                 <span className="badge badge-ghost badge-sm opacity-60">7 nodes · 7 edges</span>
-                                <span className="badge badge-ghost badge-sm opacity-40 ml-auto">React Flow</span>
+                                <span className="badge badge-ghost badge-sm opacity-40 ml-auto">
+                                    vis-network · React Flow
+                                </span>
                             </div>
                         </div>
                     </div>
@@ -149,9 +202,14 @@ export default function Home() {
                 <div className="max-w-7xl mx-auto px-6 py-14">
                     <p className="text-center text-sm uppercase tracking-widest opacity-40 mb-8 font-display font-semibold">
                         Платформа в цифрах
+                        {statsLoading && (
+                            <span className="block text-[10px] normal-case tracking-normal mt-1 opacity-60">
+                                оновлення…
+                            </span>
+                        )}
                     </p>
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-                        {PROMO_STATS.map((s) => (
+                        {promoStats.map((s) => (
                             <div key={s.label} className="stat-card">
                                 <div className="stat-value">{s.value}</div>
                                 <div className="font-semibold mt-2 text-sm">{s.label}</div>
@@ -182,7 +240,9 @@ export default function Home() {
                                 {f.icon}
                             </div>
                             <h3 className="font-display font-bold text-lg mb-2">{f.title}</h3>
-                            <p className="text-sm opacity-65 leading-relaxed">{f.desc}</p>
+                            <p className="text-sm opacity-65 leading-relaxed">
+                                {f.title === 'Прогрес і адмін-панель' ? analyticsDesc : f.desc}
+                            </p>
                         </div>
                     ))}
                 </div>
