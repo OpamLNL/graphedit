@@ -11,9 +11,17 @@ import {
 import BarcodeScanner from '../../components/tix/BarcodeScanner';
 import TicketBarcodeImage from '../../components/tix/TicketBarcodeImage';
 
-type Screen = 'hub' | 'generate' | 'import' | 'checkin' | 'scan-login' | 'scan';
+type Screen =
+    | 'hub'
+    | 'generate'
+    | 'import'
+    | 'checkin'
+    | 'scan-login'
+    | 'scan'
+    | 'draw-login'
+    | 'draw';
 
-const STORAGE_KEY = 'tix-checkin-state-v2';
+const STORAGE_KEY = 'tix-checkin-state-v3';
 
 type PersistedState = {
     screen: Screen;
@@ -53,7 +61,8 @@ export default function TicketCheckinPage() {
     const navigate = useNavigate();
     const saved = loadState();
 
-    const [screen, setScreen] = useState<Screen>(saved?.screen ?? 'hub');
+    // Завжди з меню — три кнопки мають бути видно одразу
+    const [screen, setScreen] = useState<Screen>('hub');
     const [eventNo, setEventNo] = useState(saved?.eventNo ?? 1);
     const [eventDate, setEventDate] = useState(saved?.eventDate ?? todayIso());
     const [eventSalt, setEventSalt] = useState(saved?.eventSalt ?? '');
@@ -163,21 +172,7 @@ export default function TicketCheckinPage() {
         setScreen('import');
     };
 
-    const openScanLogin = () => {
-        setScanEventNo(eventNo || 1);
-        setStatusMsg('');
-        setLastResult(null);
-        setLastMessage('');
-        setScreen('scan-login');
-    };
-
-    const handleScanLogin = async (e: React.FormEvent) => {
-        e.preventDefault();
-        const no = Number(scanEventNo);
-        if (!no || no < 1) {
-            setStatusMsg('Введіть номер заходу');
-            return;
-        }
+    const loadEventByNo = async (no: number, nextScreen: 'scan' | 'draw') => {
         setBusy(true);
         setStatusMsg('');
         try {
@@ -197,7 +192,7 @@ export default function TicketCheckinPage() {
             setGeneratedJson(null);
             setAccessCode('');
             setStatusMsg('');
-            setScreen('scan');
+            setScreen(nextScreen);
         } catch (err) {
             setStatusMsg(
                 err instanceof ApiError
@@ -209,6 +204,40 @@ export default function TicketCheckinPage() {
         } finally {
             setBusy(false);
         }
+    };
+
+    const openScanLogin = () => {
+        setScanEventNo(eventNo || 1);
+        setStatusMsg('');
+        setLastResult(null);
+        setLastMessage('');
+        setScreen('scan-login');
+    };
+
+    const openDrawLogin = () => {
+        setScanEventNo(eventNo || 1);
+        setStatusMsg('');
+        setScreen('draw-login');
+    };
+
+    const handleScanLogin = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const no = Number(scanEventNo);
+        if (!no || no < 1) {
+            setStatusMsg('Введіть номер заходу');
+            return;
+        }
+        await loadEventByNo(no, 'scan');
+    };
+
+    const handleDrawLogin = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const no = Number(scanEventNo);
+        if (!no || no < 1) {
+            setStatusMsg('Введіть номер заходу');
+            return;
+        }
+        await loadEventByNo(no, 'draw');
     };
 
     const handleGenerate = async (e: React.FormEvent) => {
@@ -479,7 +508,6 @@ export default function TicketCheckinPage() {
             <div className="flex items-center justify-between gap-4">
                 <div>
                     <h1 className="text-2xl font-bold">Квитки / штрихкоди</h1>
-                    <p className="text-xs text-primary font-mono mt-1">UI v2 · gen/import</p>
                 </div>
                 <Link to="/admin/adminPage" className="btn btn-ghost btn-sm">
                     ← Адмінка
@@ -487,33 +515,38 @@ export default function TicketCheckinPage() {
             </div>
 
             {screen === 'hub' && (
-                <div className="space-y-4">
+                <div className="space-y-3">
                     <button
                         type="button"
-                        className="btn btn-primary btn-lg w-full"
+                        className="btn btn-primary btn-lg w-full h-16 text-lg"
                         onClick={openScanLogin}
                     >
-                        Сканування штрихкодів
+                        СКАНУВАТИ
                     </button>
-                    <div className="divider text-xs opacity-50">підготовка квитків</div>
-                    <button type="button" className="btn btn-outline w-full" onClick={openGenerate}>
-                        Згенерувати штрихкоди
+                    <button
+                        type="button"
+                        className="btn btn-secondary btn-lg w-full h-16 text-lg"
+                        onClick={openGenerate}
+                    >
+                        ГЕНЕРУВАТИ
                     </button>
-                    <button type="button" className="btn btn-outline w-full" onClick={openImport}>
-                        Імпорт з JSON
+                    <button
+                        type="button"
+                        className="btn btn-accent btn-lg w-full h-16 text-lg"
+                        onClick={openDrawLogin}
+                    >
+                        НАМАЛЮВАТИ ШТРИХКОД
+                    </button>
+                    <button type="button" className="btn btn-ghost btn-sm w-full" onClick={openImport}>
+                        Імпорт JSON
                     </button>
                     {tickets.length > 0 && (
                         <button
                             type="button"
-                            className="btn btn-ghost w-full"
+                            className="btn btn-ghost btn-sm w-full"
                             onClick={() => setScreen('checkin')}
                         >
-                            Сесія генерації ({tickets.length} квитків)
-                        </button>
-                    )}
-                    {(tickets.length > 0 || canVerifyInDb) && (
-                        <button type="button" className="btn btn-ghost btn-sm w-full" onClick={clearSession}>
-                            Очистити сесію
+                            Сесія генерації ({tickets.length})
                         </button>
                     )}
                 </div>
@@ -524,10 +557,8 @@ export default function TicketCheckinPage() {
                     <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
                         ← Назад
                     </button>
-                    <h2 className="text-xl font-bold">Сканування</h2>
-                    <p className="text-sm opacity-70">
-                        Введи номер заходу (квитки мають бути вже в базі).
-                    </p>
+                    <h2 className="text-xl font-bold">Сканувати</h2>
+                    <p className="text-sm opacity-70">Номер заходу (вже в базі)</p>
                     <input
                         type="number"
                         min={1}
@@ -543,6 +574,76 @@ export default function TicketCheckinPage() {
                         {busy ? 'Завантаження…' : 'Відкрити сканер'}
                     </button>
                 </form>
+            )}
+
+            {screen === 'draw-login' && (
+                <form onSubmit={handleDrawLogin} className="space-y-4">
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
+                        ← Назад
+                    </button>
+                    <h2 className="text-xl font-bold">Намалювати штрихкод</h2>
+                    <p className="text-sm opacity-70">Номер заходу (вже в базі)</p>
+                    <input
+                        type="number"
+                        min={1}
+                        className="input input-bordered w-full font-mono"
+                        placeholder="Номер заходу"
+                        value={scanEventNo}
+                        onChange={(e) => setScanEventNo(Number(e.target.value))}
+                        autoFocus
+                        required
+                    />
+                    {statusMsg && <p className="text-sm text-error">{statusMsg}</p>}
+                    <button type="submit" className="btn btn-accent w-full" disabled={busy}>
+                        {busy ? 'Завантаження…' : 'Показати штрихкоди'}
+                    </button>
+                </form>
+            )}
+
+            {screen === 'draw' && (
+                <div className="space-y-6">
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
+                        ← Меню
+                    </button>
+                    <div className="rounded-xl border border-base-content/10 p-4 space-y-1">
+                        {eventName && <div className="font-semibold">{eventName}</div>}
+                        <div className="text-xs opacity-60">Номер заходу</div>
+                        <div className="font-mono text-lg font-semibold">№{eventNo}</div>
+                        <div className="text-sm opacity-70">Квитків: {tickets.length}</div>
+                    </div>
+                    {tickets.length === 0 ? (
+                        <p className="text-sm text-warning">Немає квитків для цього заходу</p>
+                    ) : (
+                        <div className="rounded-xl border border-base-content/10 p-4 space-y-3">
+                            <h2 className="font-semibold">Штрихкод (Code128)</h2>
+                            <label className="form-control w-full max-w-xs">
+                                <span className="label-text text-sm opacity-70">№ квитка</span>
+                                <select
+                                    className="select select-bordered"
+                                    value={previewTicketNo}
+                                    onChange={(e) => setPreviewTicketNo(Number(e.target.value))}
+                                >
+                                    {tickets.map((t) => (
+                                        <option key={t.ticketNo} value={t.ticketNo}>
+                                            №{t.ticketNo}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                            {(() => {
+                                const t =
+                                    tickets.find((x) => x.ticketNo === previewTicketNo) ||
+                                    tickets[0];
+                                return t ? (
+                                    <TicketBarcodeImage
+                                        value={t.code}
+                                        label={`Квиток №${t.ticketNo}`}
+                                    />
+                                ) : null;
+                            })()}
+                        </div>
+                    )}
+                </div>
             )}
 
             {screen === 'scan' && (
