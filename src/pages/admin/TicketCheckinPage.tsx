@@ -23,19 +23,7 @@ type Screen =
 
 const STORAGE_KEY = 'tix-checkin-state-v4';
 
-const SCREENS: Screen[] = [
-    'hub',
-    'generate',
-    'import',
-    'checkin',
-    'scan-login',
-    'scan',
-    'draw-login',
-    'draw',
-];
-
 type PersistedState = {
-    screen: Screen;
     eventNo: number;
     eventDate: string;
     eventSalt: string;
@@ -49,15 +37,6 @@ type PersistedState = {
     statusMsg: string;
     scanEventNo?: number;
 };
-
-function restoreScreen(saved: Partial<PersistedState> | null): Screen {
-    const s = saved?.screen;
-    if (!s || !SCREENS.includes(s)) return 'hub';
-    if ((s === 'scan' || s === 'draw') && !saved?.persistedInDb) {
-        return s === 'scan' ? 'scan-login' : 'draw-login';
-    }
-    return s;
-}
 
 function todayIso(): string {
     const d = new Date();
@@ -84,7 +63,8 @@ export default function TicketCheckinPage() {
     const navigate = useNavigate();
     const saved = loadState();
 
-    const [screen, setScreen] = useState<Screen>(() => restoreScreen(saved));
+    // Меню з трьома кнопками — завжди при відкритті сторінки
+    const [screen, setScreen] = useState<Screen>('hub');
     const [eventNo, setEventNo] = useState(saved?.eventNo ?? 1);
     const [eventDate, setEventDate] = useState(saved?.eventDate ?? todayIso());
     const [eventSalt, setEventSalt] = useState(saved?.eventSalt ?? '');
@@ -134,7 +114,6 @@ export default function TicketCheckinPage() {
     useEffect(() => {
         if (!hydrated) return;
         const payload: PersistedState = {
-            screen,
             eventNo,
             eventDate,
             eventSalt,
@@ -151,7 +130,6 @@ export default function TicketCheckinPage() {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     }, [
         hydrated,
-        screen,
         eventNo,
         eventDate,
         eventSalt,
