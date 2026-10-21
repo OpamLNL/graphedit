@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { ApiError } from '../../api/client';
+import { tixApi, type TixGeneratedCodes } from '../../api/tix';
 
 type Screen = 'hub' | 'generate' | 'import' | 'checkin';
 
-function makeEventSalt(): string {
-    const n = Math.random().toString(36).slice(2, 8).toUpperCase();
-    return `EVT-${n}`;
-}
-
-/** Тимчасова генерація payload штрихкоду: номер квитка + сіль концерту */
-function buildBarcode(ticketNo: number, eventSalt: string): string {
-    return `${eventSalt}-${String(ticketNo).padStart(4, '0')}`;
+function todayIso(): string {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
 }
 
 export default function TicketCheckinPage() {
@@ -19,12 +19,16 @@ export default function TicketCheckinPage() {
     const navigate = useNavigate();
 
     const [screen, setScreen] = useState<Screen>('hub');
-    const [eventSalt, setEventSalt] = useState('');
+    const [eventNo, setEventNo] = useState(1);
+    const [eventDate, setEventDate] = useState(todayIso());
     const [eventName, setEventName] = useState('');
     const [ticketCount, setTicketCount] = useState(50);
     const [importText, setImportText] = useState('');
-    const [tickets, setTickets] = useState<{ ticketNo: number; barcode: string }[]>([]);
+    const [accessCode, setAccessCode] = useState('');
+    const [tickets, setTickets] = useState<{ ticketNo: number; code: string }[]>([]);
+    const [generatedJson, setGeneratedJson] = useState<TixGeneratedCodes | null>(null);
     const [statusMsg, setStatusMsg] = useState('');
+    const [busy, setBusy] = useState(false);
 
     const [manualCode, setManualCode] = useState('');
     const [lastResult, setLastResult] = useState<'ok' | 'reject' | null>(null);
@@ -43,7 +47,8 @@ export default function TicketCheckinPage() {
     };
 
     const openGenerate = () => {
-        setEventSalt(makeEventSalt());
+        setEventNo(1);
+        setEventDate(todayIso());
         setEventName('');
         setTicketCount(50);
         setStatusMsg('');
@@ -56,22 +61,39 @@ export default function TicketCheckinPage() {
         setScreen('import');
     };
 
-    const handleGenerate = (e: React.FormEvent) => {
+    const handleGenerate = async (e: React.FormEvent) => {
         e.preventDefault();
-        const salt = eventSalt.trim();
-        const count = Number(ticketCount);
-        if (!salt || !count || count < 1 || count > 5000) {
-            setStatusMsg('Вкажіть код концерту і кількість квитків (1–5000).');
+        if (!eventNo || eventNo < 1 || !eventDate || !ticketCount) {
+            setStatusMsg('Вкажіть номер заходу, дату і кількість квитків.');
             return;
         }
-        const generated = Array.from({ length: count }, (_, i) => {
-            const ticketNo = i + 1;
-            return { ticketNo, barcode: buildBarcode(ticketNo, salt) };
-        });
-        setTickets(generated);
-        setStatusMsg(`Згенеровано ${count} кодів для «${eventName.trim() || salt}».`);
-        // API / JSON-експорт / PDF підключимо пізніше
-        setScreen('checkin');
+        setBusy(true);
+        setStatusMsg('');
+        try {
+            const result = await tixApi.generateCodes({
+                eventNo: Number(eventNo),
+                date: eventDate,
+                ticketCount: Number(ticketCount),
+                name: eventName.trim() || undefined,
+                persist: true,
+            });
+            setGeneratedJson(result);
+            setAccessCode(result.accessCode);
+            setEventName(result.name);
+            setTickets(result.tickets);
+            setStatusMsg(`Згенеровано ${result.tickets.length} кодів (${result.accessCode}).`);
+            setScreen('checkin');
+        } catch (err) {
+            const msg =
+                err instanceof ApiError
+                    ? err.message
+                    : err instanceof Error
+                      ? err.message
+                      : 'Помилка генерації';
+            setStatusMsg(msg);
+        } finally {
+            setBusy(false);
+        }
     };
 
     const handleImport = (e: React.FormEvent) => {
@@ -84,31 +106,47 @@ export default function TicketCheckinPage() {
             }
             const parsed = list.map((item: unknown, idx: number) => {
                 if (typeof item === 'string') {
-                    return { ticketNo: idx + 1, barcode: item };
+                    return { ticketNo: idx + 1, code: item };
                 }
                 if (item && typeof item === 'object') {
-                    const o = item as { ticketNo?: number; barcode?: string; code?: string };
-                    const barcode = o.barcode || o.code;
-                    if (!barcode) throw new Error(`Немає barcode у елементі #${idx + 1}`);
-                    return { ticketNo: o.ticketNo ?? idx + 1, barcode: String(barcode) };
+                    const o = item as {
+                        ticketNo?: number;
+                        barcode?: string;
+                        code?: string;
+                    };
+                    const code = o.code || o.barcode;
+                    if (!code) throw new Error(`Немає code у елементі #${idx + 1}`);
+                    return { ticketNo: o.ticketNo ?? idx + 1, code: String(code) };
                 }
                 throw new Error(`Невірний формат елемента #${idx + 1}`);
             });
-            const saltFromJson =
+            const codeFromJson =
                 !Array.isArray(raw) && raw && typeof raw === 'object'
-                    ? String((raw as { eventSalt?: string; accessCode?: string }).eventSalt ||
+                    ? String(
                           (raw as { accessCode?: string }).accessCode ||
-                          '')
+                              (raw as { eventSalt?: string }).eventSalt ||
+                              '',
+                      )
                     : '';
-            setEventSalt(saltFromJson || makeEventSalt());
+            setAccessCode(codeFromJson);
             setEventName(
                 !Array.isArray(raw) && raw && typeof raw === 'object'
-                    ? String((raw as { eventName?: string; name?: string }).eventName ||
+                    ? String(
                           (raw as { name?: string }).name ||
-                          '')
+                              (raw as { eventName?: string }).eventName ||
+                              '',
+                      )
                     : '',
             );
             setTickets(parsed);
+            setGeneratedJson({
+                eventNo: Number((raw as { eventNo?: number }).eventNo) || 0,
+                date: String((raw as { date?: string }).date || ''),
+                accessCode: codeFromJson,
+                name: eventName,
+                persisted: false,
+                tickets: parsed,
+            });
             setStatusMsg(`Імпортовано ${parsed.length} кодів.`);
             setScreen('checkin');
         } catch (err) {
@@ -118,16 +156,20 @@ export default function TicketCheckinPage() {
 
     const downloadJson = () => {
         if (!tickets.length) return;
-        const payload = {
-            eventName: eventName || undefined,
-            eventSalt,
-            tickets: tickets.map((t) => ({ ticketNo: t.ticketNo, barcode: t.barcode })),
-        };
-        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const payload =
+            generatedJson ??
+            ({
+                accessCode,
+                name: eventName || undefined,
+                tickets: tickets.map((t) => ({ ticketNo: t.ticketNo, code: t.code })),
+            } as const);
+        const blob = new Blob([JSON.stringify(payload, null, 2)], {
+            type: 'application/json',
+        });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `tickets-${eventSalt || 'export'}.json`;
+        a.download = `tickets-${accessCode || 'export'}.json`;
         a.click();
         URL.revokeObjectURL(url);
     };
@@ -136,13 +178,13 @@ export default function TicketCheckinPage() {
         e.preventDefault();
         const code = manualCode.trim();
         if (!code) return;
-        const known = tickets.find((t) => t.barcode === code);
+        const known = tickets.find((t) => t.code === code);
         if (!known) {
             setLastResult('reject');
             setLastMessage('Код невідомий (немає в списку)');
         } else {
             setLastResult('ok');
-            setLastMessage(`Квиток №${known.ticketNo} — ок (ще без збереження в БД)`);
+            setLastMessage(`Квиток №${known.ticketNo} — ок`);
         }
         setManualCode('');
     };
@@ -186,7 +228,7 @@ export default function TicketCheckinPage() {
                         ← Назад
                     </button>
                     <p className="text-sm opacity-70">
-                        Сіль концерту потрапить у кожен штрихкод разом із номером квитка.
+                        Номер заходу + дата → JSON кодів ({`{ ticketNo, code }`}) і запис у БД.
                     </p>
                     <label className="form-control w-full">
                         <span className="label-text text-sm opacity-70">Назва (опційно)</span>
@@ -198,11 +240,23 @@ export default function TicketCheckinPage() {
                         />
                     </label>
                     <label className="form-control w-full">
-                        <span className="label-text text-sm opacity-70">Сіль / код концерту</span>
+                        <span className="label-text text-sm opacity-70">Номер заходу</span>
                         <input
+                            type="number"
+                            min={1}
                             className="input input-bordered w-full font-mono"
-                            value={eventSalt}
-                            onChange={(e) => setEventSalt(e.target.value)}
+                            value={eventNo}
+                            onChange={(e) => setEventNo(Number(e.target.value))}
+                            required
+                        />
+                    </label>
+                    <label className="form-control w-full">
+                        <span className="label-text text-sm opacity-70">Дата заходу</span>
+                        <input
+                            type="date"
+                            className="input input-bordered w-full"
+                            value={eventDate}
+                            onChange={(e) => setEventDate(e.target.value)}
                             required
                         />
                     </label>
@@ -219,8 +273,8 @@ export default function TicketCheckinPage() {
                         />
                     </label>
                     {statusMsg && <p className="text-sm text-error">{statusMsg}</p>}
-                    <button type="submit" className="btn btn-primary w-full">
-                        Згенерувати
+                    <button type="submit" className="btn btn-primary w-full" disabled={busy}>
+                        {busy ? 'Генерація…' : 'Згенерувати JSON'}
                     </button>
                 </form>
             )}
@@ -231,12 +285,12 @@ export default function TicketCheckinPage() {
                         ← Назад
                     </button>
                     <p className="text-sm opacity-70">
-                        Вставте JSON: масив кодів або{' '}
-                        <code className="text-xs">{`{ eventSalt, tickets: [{ ticketNo, barcode }] }`}</code>
+                        Вставте JSON з полями{' '}
+                        <code className="text-xs">{`tickets: [{ ticketNo, code }]`}</code>
                     </p>
                     <textarea
                         className="textarea textarea-bordered w-full font-mono text-xs h-48"
-                        placeholder='{"eventSalt":"EVT-ABC","tickets":[{"ticketNo":1,"barcode":"EVT-ABC-0001"}]}'
+                        placeholder='{"eventNo":12,"date":"2026-11-15","accessCode":"E12-20261115","tickets":[{"ticketNo":1,"code":"E12-20261115-0001"}]}'
                         value={importText}
                         onChange={(e) => setImportText(e.target.value)}
                         required
@@ -256,10 +310,14 @@ export default function TicketCheckinPage() {
 
                     <div className="rounded-xl border border-base-content/10 p-4 space-y-1">
                         {eventName && <div className="font-semibold">{eventName}</div>}
-                        <div className="text-xs opacity-60">Код / сіль концерту</div>
-                        <div className="font-mono text-lg font-semibold">{eventSalt}</div>
-                        <div className="text-sm opacity-70">Квитків у списку: {tickets.length}</div>
-                        <button type="button" className="btn btn-outline btn-sm mt-2" onClick={downloadJson}>
+                        <div className="text-xs opacity-60">Код заходу (accessCode)</div>
+                        <div className="font-mono text-lg font-semibold">{accessCode || '—'}</div>
+                        <div className="text-sm opacity-70">Квитків: {tickets.length}</div>
+                        <button
+                            type="button"
+                            className="btn btn-outline btn-sm mt-2"
+                            onClick={downloadJson}
+                        >
                             Завантажити JSON
                         </button>
                     </div>
