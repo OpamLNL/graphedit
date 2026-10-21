@@ -10,6 +10,7 @@ import {
 } from '../../api/tix';
 import BarcodeScanner from '../../components/tix/BarcodeScanner';
 import TicketBarcodeImage from '../../components/tix/TicketBarcodeImage';
+import TicketPdfExport from '../../components/tix/TicketPdfExport';
 
 type Screen =
     | 'hub'
@@ -19,7 +20,8 @@ type Screen =
     | 'scan-login'
     | 'scan'
     | 'draw-login'
-    | 'draw';
+    | 'draw'
+    | 'pdf';
 
 const STORAGE_KEY = 'tix-checkin-state-v5';
 
@@ -639,6 +641,16 @@ export default function TicketCheckinPage() {
                     >
                         НАМАЛЮВАТИ ШТРИХКОД
                     </button>
+                    <button
+                        type="button"
+                        className="btn btn-lg w-full h-16 text-lg"
+                        onClick={() => {
+                            setStatusMsg('');
+                            setScreen('pdf');
+                        }}
+                    >
+                        PDF КВИТКИ
+                    </button>
                     <button type="button" className="btn btn-ghost btn-sm w-full" onClick={openImport}>
                         Імпорт JSON
                     </button>
@@ -652,6 +664,16 @@ export default function TicketCheckinPage() {
                         </button>
                     )}
                 </div>
+            )}
+
+            {screen === 'pdf' && (
+                <TicketPdfExport
+                    eventNo={eventNo}
+                    eventName={eventName}
+                    eventDate={eventDate}
+                    tickets={tickets}
+                    onBack={goHub}
+                />
             )}
 
             {screen === 'scan-login' && (
