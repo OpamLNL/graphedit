@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
     Html5Qrcode,
     Html5QrcodeSupportedFormats,
@@ -22,8 +22,24 @@ function getBarcodeDetector(): BarcodeDetectorCtor | null {
     return w.BarcodeDetector ?? null;
 }
 
-/** Сканер 1D (Code128): html5-qrcode першим (надійніше), native — запасний */
+/** Черга stop→start між монтуваннями (інакше камера «залипає» після ДАЛІ) */
+let cameraChain: Promise<void> = Promise.resolve();
+
+function enqueueCamera<T>(fn: () => Promise<T>): Promise<T> {
+    const run = cameraChain.then(fn, fn);
+    cameraChain = run.then(
+        () => undefined,
+        () => undefined,
+    );
+    return run;
+}
+
+/** Сканер 1D (Code128): html5 першим, native — запасний */
 export default function BarcodeScanner({ onScan, paused }: Props) {
+    const reactId = useId().replace(/:/g, '');
+    const hostId = `tix-barcode-host-${reactId}`;
+    const regionId = `tix-barcode-reader-${reactId}`;
+
     const onScanRef = useRef(onScan);
     const pausedRef = useRef(!!paused);
     const lastCodeRef = useRef<{ code: string; at: number } | null>(null);
@@ -55,10 +71,9 @@ export default function BarcodeScanner({ onScan, paused }: Props) {
         let stream: MediaStream | null = null;
         let raf = 0;
         let scanner: Html5Qrcode | null = null;
-        const regionId = `tix-barcode-reader-${Math.random().toString(36).slice(2, 9)}`;
 
         const startHtml5 = async () => {
-            const host = document.getElementById('tix-barcode-host');
+            const host = document.getElementById(hostId);
             if (!host) throw new Error('Немає контейнера сканера');
 
             host.innerHTML = '';
@@ -79,7 +94,6 @@ export default function BarcodeScanner({ onScan, paused }: Props) {
 
             const config: Html5QrcodeCameraScanConfig = {
                 fps: 15,
-                // Широке вікно — довгі Code128 інакше не читаються
                 qrbox: (viewW, viewH) => ({
                     width: Math.floor(Math.min(viewW * 0.98, viewW - 4)),
                     height: Math.floor(Math.min(viewH * 0.55, 280)),
@@ -167,51 +181,82 @@ export default function BarcodeScanner({ onScan, paused }: Props) {
             return true;
         };
 
-        const start = async () => {
+        const stopAll = async () => {
+            if (raf) {
+                window.clearTimeout(raf);
+                raf = 0;
+            }
+            if (stream) {
+                stream.getTracks().forEach((t) => t.stop());
+                stream = null;
+            }
+            if (videoRef.current) videoRef.current.srcObject = null;
+            if (scanner) {
+                try {
+                    if (scanner.isScanning) await scanner.stop();
+                } catch {
+                    /* ignore */
+                }
+                try {
+                    scanner.clear();
+                } catch {
+                    /* ignore */
+                }
+                scanner = null;
+            }
+            const host = document.getElementById(hostId);
+            if (host) host.innerHTML = '';
+            setEngine('');
+        };
+
+        void enqueueCamera(async () => {
+            if (cancelled) return;
             setError('');
-            // Спочатку html5 — Code128 з HMAC часто «мовчить» на native BarcodeDetector
             try {
                 await startHtml5();
                 if (!cancelled) return;
             } catch {
                 /* fallback native */
             }
-            if (cancelled) return;
+            if (cancelled) {
+                await stopAll();
+                return;
+            }
             try {
-                if (scanner?.isScanning) {
-                    await scanner.stop().catch(() => undefined);
+                if (scanner) {
+                    try {
+                        if (scanner.isScanning) await scanner.stop();
+                    } catch {
+                        /* ignore */
+                    }
                     scanner = null;
                 }
-                const host = document.getElementById('tix-barcode-host');
+                const host = document.getElementById(hostId);
                 if (host) host.innerHTML = '';
                 const ok = await startNative();
-                if (ok || cancelled) return;
+                if (cancelled) {
+                    await stopAll();
+                    return;
+                }
+                if (ok) return;
                 throw new Error('Камера недоступна');
             } catch (err) {
-                setEngine('');
+                await stopAll();
+                if (cancelled) return;
                 setError(
                     err instanceof Error
                         ? err.message
                         : 'Не вдалося відкрити камеру. Дозволь доступ або введи код вручну.',
                 );
             }
-        };
-
-        void start();
+        });
 
         return () => {
             cancelled = true;
-            if (raf) window.clearTimeout(raf);
-            if (stream) stream.getTracks().forEach((t) => t.stop());
-            if (videoRef.current) videoRef.current.srcObject = null;
-            if (scanner?.isScanning) {
-                void scanner.stop().catch(() => undefined);
-            }
-            const host = document.getElementById('tix-barcode-host');
-            if (host) host.innerHTML = '';
+            void enqueueCamera(() => stopAll());
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps -- mount once; paused via ref
-    }, []);
+    }, [hostId, regionId]);
 
     return (
         <div className="space-y-2">
@@ -224,7 +269,7 @@ export default function BarcodeScanner({ onScan, paused }: Props) {
                     autoPlay
                 />
                 <div
-                    id="tix-barcode-host"
+                    id={hostId}
                     className={engine === 'html5' || !engine ? 'w-full min-h-[240px]' : 'hidden'}
                 />
                 {paused && engine && (

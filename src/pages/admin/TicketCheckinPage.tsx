@@ -976,46 +976,46 @@ export default function TicketCheckinPage() {
                             </div>
                         )}
 
-                        {!awaitingNext && (
-                            <div className="space-y-3">
-                                <div className="flex items-center justify-between gap-2">
-                                    <h2 className="font-semibold">Сканер</h2>
-                                    <button
-                                        type="button"
-                                        className="btn btn-ghost btn-xs"
-                                        onClick={() => setScannerOn((v) => !v)}
-                                    >
-                                        {scannerOn ? 'Вимкнути камеру' : 'Увімкнути камеру'}
-                                    </button>
-                                </div>
-                                {scannerOn && (
-                                    <BarcodeScanner
-                                        onScan={(code) => void verifyCode(code)}
-                                        paused={scanning || awaitingNext}
-                                    />
-                                )}
-                            </div>
-                        )}
-
-                        {!awaitingNext && (
-                            <form onSubmit={handleManualScan} className="space-y-3">
-                                <label className="text-sm opacity-70">Або код вручну</label>
-                                <input
-                                    className="input input-bordered w-full font-mono text-base-content"
-                                    placeholder="Значення зі штрихкоду"
-                                    value={manualCode}
-                                    onChange={(e) => setManualCode(e.target.value)}
-                                    disabled={scanning}
-                                />
+                        {/* Камеру НЕ demount після скану — лише pause; інакше після ДАЛІ не встає */}
+                        <div className={awaitingNext ? 'hidden' : 'space-y-3'}>
+                            <div className="flex items-center justify-between gap-2">
+                                <h2 className="font-semibold">Сканер</h2>
                                 <button
-                                    type="submit"
-                                    className="btn btn-primary w-full"
-                                    disabled={scanning}
+                                    type="button"
+                                    className="btn btn-ghost btn-xs"
+                                    onClick={() => setScannerOn((v) => !v)}
                                 >
-                                    {scanning ? 'Перевірка…' : 'Перевірити'}
+                                    {scannerOn ? 'Вимкнути камеру' : 'Увімкнути камеру'}
                                 </button>
-                            </form>
-                        )}
+                            </div>
+                            {scannerOn && (
+                                <BarcodeScanner
+                                    onScan={(code) => void verifyCode(code)}
+                                    paused={scanning || awaitingNext}
+                                />
+                            )}
+                        </div>
+
+                        <form
+                            onSubmit={handleManualScan}
+                            className={awaitingNext ? 'hidden' : 'space-y-3'}
+                        >
+                            <label className="text-sm opacity-70">Або код вручну</label>
+                            <input
+                                className="input input-bordered w-full font-mono text-base-content"
+                                placeholder="Значення зі штрихкоду"
+                                value={manualCode}
+                                onChange={(e) => setManualCode(e.target.value)}
+                                disabled={scanning}
+                            />
+                            <button
+                                type="submit"
+                                className="btn btn-primary w-full"
+                                disabled={scanning}
+                            >
+                                {scanning ? 'Перевірка…' : 'Перевірити'}
+                            </button>
+                        </form>
 
                         <div className="grid grid-cols-3 gap-3 text-center">
                             <div
