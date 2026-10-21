@@ -9,6 +9,7 @@ import {
     type TixTicketCode,
 } from '../../api/tix';
 import BarcodeScanner from '../../components/tix/BarcodeScanner';
+import TicketBarcodeImage from '../../components/tix/TicketBarcodeImage';
 
 type Screen = 'hub' | 'generate' | 'import' | 'checkin';
 
@@ -76,6 +77,7 @@ export default function TicketCheckinPage() {
     const [stats, setStats] = useState<TixStats | null>(null);
     const [scannerOn, setScannerOn] = useState(true);
     const [scanning, setScanning] = useState(false);
+    const [previewTicketNo, setPreviewTicketNo] = useState(1);
 
     useEffect(() => {
         if (!user) return navigate('/');
@@ -589,9 +591,43 @@ export default function TicketCheckinPage() {
 
                     {statusMsg && <p className="text-sm opacity-80">{statusMsg}</p>}
 
+                    {tickets.length > 0 && (
+                        <div className="rounded-xl border border-base-content/10 p-4 space-y-3">
+                            <h2 className="font-semibold">Штрихкод (Code128)</h2>
+                            <p className="text-sm opacity-70">
+                                Картинка штрихкоду для друку / тесту. Наведи камеру саме на неї.
+                            </p>
+                            <label className="form-control w-full max-w-xs">
+                                <span className="label-text text-sm opacity-70">№ квитка</span>
+                                <select
+                                    className="select select-bordered select-sm"
+                                    value={previewTicketNo}
+                                    onChange={(e) => setPreviewTicketNo(Number(e.target.value))}
+                                >
+                                    {tickets.map((t) => (
+                                        <option key={t.ticketNo} value={t.ticketNo}>
+                                            №{t.ticketNo}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                            {(() => {
+                                const t =
+                                    tickets.find((x) => x.ticketNo === previewTicketNo) ||
+                                    tickets[0];
+                                return t ? (
+                                    <TicketBarcodeImage
+                                        value={t.code}
+                                        label={`Квиток №${t.ticketNo}`}
+                                    />
+                                ) : null;
+                            })()}
+                        </div>
+                    )}
+
                     <div className="space-y-3">
                         <div className="flex items-center justify-between gap-2">
-                            <h2 className="font-semibold">Сканер</h2>
+                            <h2 className="font-semibold">Сканер камери</h2>
                             <button
                                 type="button"
                                 className="btn btn-ghost btn-xs"
