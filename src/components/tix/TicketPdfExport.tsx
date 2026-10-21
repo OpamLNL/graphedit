@@ -236,25 +236,54 @@ export default function TicketPdfExport() {
     };
 
     const downloadJson = () => {
-        if (!ranged.length) {
-            setError('Немає квитків для JSON');
+        setError('');
+        // 1) уже застосовані квитки 2) інакше — текст з поля JSON
+        let body = '';
+        let count = 0;
+        if (ranged.length) {
+            body = JSON.stringify(
+                {
+                    eventNo: metaNo.trim(),
+                    name: metaName.trim(),
+                    tickets: ranged,
+                },
+                null,
+                2,
+            );
+            count = ranged.length;
+        } else if (tickets.length) {
+            body = JSON.stringify(
+                {
+                    eventNo: metaNo.trim(),
+                    name: metaName.trim(),
+                    tickets,
+                },
+                null,
+                2,
+            );
+            count = tickets.length;
+        } else if (jsonText.trim()) {
+            try {
+                body = JSON.stringify(JSON.parse(jsonText), null, 2);
+                const raw = JSON.parse(jsonText);
+                const list = Array.isArray(raw) ? raw : raw?.tickets;
+                count = Array.isArray(list) ? list.length : 0;
+            } catch {
+                setError('У полі невалідний JSON — спочатку виправ або застосуй');
+                return;
+            }
+        } else {
+            setError('Немає імпортованого JSON для скачування');
             return;
         }
-        const payload = {
-            eventNo: metaNo.trim(),
-            name: metaName.trim(),
-            tickets: ranged,
-        };
-        const blob = new Blob([JSON.stringify(payload, null, 2)], {
-            type: 'application/json',
-        });
+        const blob = new Blob([body], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         a.download = `${metaNo.trim() || 'tickets'}_${fromNo}-${toNo}.json`;
         a.click();
         URL.revokeObjectURL(url);
-        setProgress(`JSON файл: ${ranged.length} квитків`);
+        setProgress(`Скачано JSON: ${count || '—'} квитків`);
     };
 
     const setOrientation = (orientation: PdfBarcodeOrientation) => {
@@ -467,28 +496,18 @@ export default function TicketPdfExport() {
                     </label>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                    <button
-                        type="button"
-                        className="btn btn-primary btn-sm"
-                        disabled={dbBusy || busy}
-                        onClick={() => void loadFromDb()}
-                    >
-                        {dbBusy ? 'Завантаження…' : 'З бази → JSON'}
-                    </button>
-                    <button
-                        type="button"
-                        className="btn btn-outline btn-sm"
-                        disabled={!ranged.length}
-                        onClick={downloadJson}
-                    >
-                        Скачати JSON
-                    </button>
-                </div>
+                <button
+                    type="button"
+                    className="btn btn-primary btn-sm w-full"
+                    disabled={dbBusy || busy}
+                    onClick={() => void loadFromDb()}
+                >
+                    {dbBusy ? 'Завантаження…' : 'З бази → JSON'}
+                </button>
 
                 <label className="form-control w-full">
                     <span className="label-text text-xs opacity-60">
-                        Або встав JSON вручну і натисни «Застосувати JSON»
+                        Або встав JSON вручну — застосуй і/або скачай файл
                     </span>
                     <textarea
                         className="textarea textarea-bordered w-full font-mono text-xs h-36"
@@ -497,9 +516,19 @@ export default function TicketPdfExport() {
                         onChange={(e) => setJsonText(e.target.value)}
                     />
                 </label>
-                <button type="button" className="btn btn-outline btn-sm w-full" onClick={applyJson}>
-                    Застосувати JSON
-                </button>
+                <div className="grid grid-cols-2 gap-2">
+                    <button type="button" className="btn btn-outline btn-sm" onClick={applyJson}>
+                        Застосувати JSON
+                    </button>
+                    <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        disabled={!jsonText.trim() && !tickets.length}
+                        onClick={downloadJson}
+                    >
+                        Скачати JSON
+                    </button>
+                </div>
 
                 <p className="text-sm opacity-70">
                     У діапазоні: <span className="font-semibold">{ranged.length}</span>
