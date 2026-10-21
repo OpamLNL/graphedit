@@ -13,6 +13,7 @@ import ApiDocsPage from './pages/ApiDocsPage';
 import ProfilePage from './pages/ProfilePage';
 import Login from './pages/Login';
 import AdminPage from './pages/admin/AdminPage.tsx';
+import TicketCheckinPage from './pages/admin/TicketCheckinPage.tsx';
 import TeachingStatsPage from './pages/teaching/TeachingStatsPage';
 import TeachingUsersPage from './pages/teaching/TeachingUsersPage';
 import MapLearnersPage from './pages/teaching/MapLearnersPage';
@@ -45,6 +46,7 @@ function App() {
                     <Route path="/progress" element={<Navigate to="/profile" replace />} />
                     <Route path="/login" element={<Login />} />
                     <Route path="/admin/adminPage" element={<AdminPage />} />
+                    <Route path="/admin/ticket-checkin" element={<TicketCheckinPage />} />
                 </Routes>
             </main>
         </div>

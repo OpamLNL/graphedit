@@ -70,7 +70,16 @@ export default function AdminPage() {
 
     return (
         <div className="max-w-6xl mx-auto p-6 space-y-8">
-            <h1 className="text-3xl font-bold">Панель адміністратора</h1>
+            <div className="flex flex-wrap items-center justify-between gap-4">
+                <h1 className="text-3xl font-bold">Панель адміністратора</h1>
+                <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => navigate('/admin/ticket-checkin')}
+                >
+                    Перевірка квитків (QR)
+                </button>
+            </div>
 
             {/* Dashboard stats */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
