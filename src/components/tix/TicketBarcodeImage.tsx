@@ -20,12 +20,14 @@ export default function TicketBarcodeImage({ value, label }: Props) {
         if (!canvas || !code) return;
 
         try {
+            // Товстіші бари + тихі зони — інакше камера не читає довгі HMAC (24 hex)
             JsBarcode(canvas, code, {
                 format: 'CODE128',
                 displayValue: true,
-                fontSize: 14,
-                height: 80,
-                margin: 10,
+                fontSize: 16,
+                height: 120,
+                width: 2.5,
+                margin: 24,
                 background: '#ffffff',
                 lineColor: '#000000',
             });
@@ -44,7 +46,8 @@ export default function TicketBarcodeImage({ value, label }: Props) {
                     <img
                         src={dataUrl}
                         alt={label || 'Штрихкод квитка'}
-                        className="w-full max-w-md rounded-lg bg-white p-3 border border-base-content/10"
+                        className="w-full max-w-full rounded-lg bg-white p-4 border border-base-content/10"
+                        style={{ imageRendering: 'pixelated' }}
                     />
                     {label && <div className="text-sm font-medium">{label}</div>}
                     <a
