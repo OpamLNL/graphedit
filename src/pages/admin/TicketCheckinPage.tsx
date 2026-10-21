@@ -17,6 +17,7 @@ type Screen =
     | 'hub'
     | 'generate'
     | 'import'
+    | 'json-from-db'
     | 'checkin'
     | 'scan-login'
     | 'scan'
@@ -106,6 +107,11 @@ export default function TicketCheckinPage() {
     );
     /** false = новий захід; true = догенерувати квитки до існуючого */
     const [appendMode, setAppendMode] = useState(false);
+
+    /** JSON з бази: діапазон + зібраний текст */
+    const [dbJsonFromNo, setDbJsonFromNo] = useState(1);
+    const [dbJsonToNo, setDbJsonToNo] = useState(50);
+    const [dbJsonText, setDbJsonText] = useState('');
 
     const canVerifyInDb = persistedInDb && eventNo.trim().length > 0;
 
@@ -236,6 +242,91 @@ export default function TicketCheckinPage() {
         setImportText('');
         setStatusMsg('');
         leaveHub('import');
+    };
+
+    const openJsonFromDb = () => {
+        setStatusMsg('');
+        setDbJsonText('');
+        setScanEventNo(eventNo || scanEventNo);
+        leaveHub('json-from-db');
+    };
+
+    const loadJsonFromDb = async () => {
+        const no = scanEventNo.trim();
+        if (!no) {
+            setStatusMsg('Вкажи номер заходу');
+            return;
+        }
+        const from = Math.min(dbJsonFromNo, dbJsonToNo);
+        const to = Math.max(dbJsonFromNo, dbJsonToNo);
+        if (!Number.isFinite(from) || !Number.isFinite(to) || from < 1) {
+            setStatusMsg('Вкажи діапазон квитків');
+            return;
+        }
+        setBusy(true);
+        setStatusMsg('');
+        try {
+            const ev = await tixApi.getByEventNo(no, true);
+            const all = (ev.tickets ?? [])
+                .map((t) => ({
+                    ticketNo: t.ticketNo,
+                    code: String(t.code || t.barcode || ''),
+                }))
+                .filter((t) => t.code);
+            if (!all.length) {
+                throw new Error(`У заході №${ev.eventNo ?? no} немає квитків у базі`);
+            }
+            const ranged = all
+                .filter((t) => t.ticketNo >= from && t.ticketNo <= to)
+                .sort((a, b) => a.ticketNo - b.ticketNo);
+            if (!ranged.length) {
+                const nos = all.map((t) => t.ticketNo);
+                throw new Error(
+                    `У діапазоні ${from}–${to} немає квитків (у базі: ${Math.min(...nos)}–${Math.max(...nos)})`,
+                );
+            }
+            const payload = {
+                eventNo: String(ev.eventNo ?? no),
+                name: ev.name || undefined,
+                date: ev.eventDate ? String(ev.eventDate).slice(0, 10) : undefined,
+                tickets: ranged,
+            };
+            const text = JSON.stringify(payload, null, 2);
+            setDbJsonText(text);
+            setEventNo(payload.eventNo);
+            setEventName(ev.name || '');
+            if (payload.date) setEventDate(payload.date);
+            setTickets(ranged);
+            setPersistedInDb(true);
+            setEventId(ev.id);
+            setStats(ev.stats);
+            setStatusMsg(`Готово: ${ranged.length} квитків (№${from}–№${to})`);
+        } catch (err) {
+            setDbJsonText('');
+            setStatusMsg(
+                err instanceof ApiError
+                    ? err.message
+                    : err instanceof Error
+                      ? err.message
+                      : 'Помилка завантаження з бази',
+            );
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const downloadDbJson = () => {
+        if (!dbJsonText.trim()) {
+            setStatusMsg('Спочатку завантаж JSON з бази');
+            return;
+        }
+        const blob = new Blob([dbJsonText], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${scanEventNo.trim() || 'tickets'}_${dbJsonFromNo}-${dbJsonToNo}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
     };
 
     const loadEventByNo = async (no: string, nextScreen: 'scan' | 'draw') => {
@@ -684,6 +775,13 @@ export default function TicketCheckinPage() {
                     <button
                         type="button"
                         className="btn btn-lg w-full h-16 text-lg"
+                        onClick={openJsonFromDb}
+                    >
+                        JSON З БАЗИ
+                    </button>
+                    <button
+                        type="button"
+                        className="btn btn-lg w-full h-16 text-lg"
                         onClick={() => {
                             setStatusMsg('');
                             leaveHub('pdf');
@@ -692,7 +790,7 @@ export default function TicketCheckinPage() {
                         PDF КВИТКИ
                     </button>
                     <button type="button" className="btn btn-ghost btn-sm w-full" onClick={openImport}>
-                        Імпорт JSON
+                        Імпорт JSON (файл)
                     </button>
                     {tickets.length > 0 && (
                         <button
@@ -1050,6 +1148,82 @@ export default function TicketCheckinPage() {
                               : 'Згенерувати і зберегти в БД'}
                     </button>
                 </form>
+            )}
+
+            {screen === 'json-from-db' && (
+                <div className="space-y-4">
+                    <h2 className="text-xl font-bold">JSON з бази</h2>
+                    <p className="text-sm opacity-70">
+                        Номер заходу + діапазон квитків → JSON з кодами зі штрихкодами
+                    </p>
+                    <label className="form-control w-full">
+                        <span className="label-text text-sm opacity-70">Номер заходу</span>
+                        <input
+                            type="text"
+                            inputMode="text"
+                            className="input input-bordered w-full font-mono"
+                            placeholder="напр. 7"
+                            value={scanEventNo}
+                            onChange={(e) => setScanEventNo(e.target.value)}
+                            autoFocus
+                        />
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                        <label className="form-control w-full">
+                            <span className="label-text text-sm opacity-70">Квитки з №</span>
+                            <input
+                                type="number"
+                                min={1}
+                                className="input input-bordered w-full"
+                                value={dbJsonFromNo}
+                                onChange={(e) => setDbJsonFromNo(Number(e.target.value) || 1)}
+                            />
+                        </label>
+                        <label className="form-control w-full">
+                            <span className="label-text text-sm opacity-70">по №</span>
+                            <input
+                                type="number"
+                                min={1}
+                                className="input input-bordered w-full"
+                                value={dbJsonToNo}
+                                onChange={(e) => setDbJsonToNo(Number(e.target.value) || 1)}
+                            />
+                        </label>
+                    </div>
+                    <button
+                        type="button"
+                        className="btn btn-primary w-full"
+                        disabled={busy}
+                        onClick={() => void loadJsonFromDb()}
+                    >
+                        {busy ? 'Завантаження…' : 'Завантажити JSON з бази'}
+                    </button>
+                    {dbJsonText ? (
+                        <>
+                            <textarea
+                                className="textarea textarea-bordered w-full font-mono text-xs h-56"
+                                value={dbJsonText}
+                                readOnly
+                            />
+                            <button
+                                type="button"
+                                className="btn btn-outline w-full"
+                                onClick={downloadDbJson}
+                            >
+                                Скачати .json
+                            </button>
+                        </>
+                    ) : null}
+                    {statusMsg ? (
+                        <p
+                            className={`text-sm ${
+                                statusMsg.startsWith('Готово') ? 'text-success' : 'text-error'
+                            }`}
+                        >
+                            {statusMsg}
+                        </p>
+                    ) : null}
+                </div>
             )}
 
             {screen === 'import' && (
