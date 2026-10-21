@@ -22,6 +22,8 @@ export type TixStats = {
 export type TixEventSaved = {
     id: number;
     name: string;
+    eventNo?: number | null;
+    eventDate?: string | null;
     accessCode: string;
     status: string;
     stats: TixStats;
@@ -29,6 +31,7 @@ export type TixEventSaved = {
         id: number;
         ticketNo: number;
         barcode: string;
+        code?: string;
         sold: boolean;
         soldAt?: string | null;
         usedAt?: string | null;
@@ -67,6 +70,8 @@ export const tixApi = {
     /** Забити захід + квитки в БД */
     saveToDb: (body: {
         name?: string;
+        eventNo?: number;
+        date?: string;
         accessCode: string;
         tickets: { ticketNo: number; code: string }[];
     }) =>
@@ -74,6 +79,8 @@ export const tixApi = {
             method: 'POST',
             body: JSON.stringify({
                 name: body.name,
+                eventNo: body.eventNo,
+                date: body.date,
                 accessCode: body.accessCode,
                 tickets: body.tickets.map((t) => ({
                     ticketNo: t.ticketNo,
@@ -82,7 +89,7 @@ export const tixApi = {
             }),
         }),
 
-    scan: (body: { accessCode: string; barcode: string }) =>
+    scan: (body: { eventNo: number; barcode: string }) =>
         apiFetch<TixScanResult>('/admin/tix/scan', {
             method: 'POST',
             body: JSON.stringify(body),
@@ -93,5 +100,10 @@ export const tixApi = {
             `/admin/tix/events/by-code/${encodeURIComponent(accessCode)}${
                 withTickets ? '?tickets=1' : ''
             }`,
+        ),
+
+    getByEventNo: (eventNo: number, withTickets = true) =>
+        apiFetch<TixEventSaved>(
+            `/admin/tix/events/by-no/${eventNo}${withTickets ? '?tickets=1' : ''}`,
         ),
 };

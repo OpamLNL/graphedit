@@ -78,9 +78,9 @@ export default function TicketCheckinPage() {
     const [scannerOn, setScannerOn] = useState(true);
     const [scanning, setScanning] = useState(false);
     const [previewTicketNo, setPreviewTicketNo] = useState(1);
-    const [scanLoginCode, setScanLoginCode] = useState('');
+    const [scanEventNo, setScanEventNo] = useState<number>(saved?.eventNo ?? 1);
 
-    const canVerifyInDb = persistedInDb && Boolean(accessCode.trim());
+    const canVerifyInDb = persistedInDb && eventNo >= 1;
 
     useEffect(() => {
         if (!user) return navigate('/');
@@ -164,7 +164,7 @@ export default function TicketCheckinPage() {
     };
 
     const openScanLogin = () => {
-        setScanLoginCode(accessCode || '');
+        setScanEventNo(eventNo || 1);
         setStatusMsg('');
         setLastResult(null);
         setLastMessage('');
@@ -173,23 +173,29 @@ export default function TicketCheckinPage() {
 
     const handleScanLogin = async (e: React.FormEvent) => {
         e.preventDefault();
-        const code = scanLoginCode.trim();
-        if (!code) {
-            setStatusMsg('Введіть код заходу');
+        const no = Number(scanEventNo);
+        if (!no || no < 1) {
+            setStatusMsg('Введіть номер заходу');
             return;
         }
         setBusy(true);
         setStatusMsg('');
         try {
-            const ev = await tixApi.getByCode(code);
-            setAccessCode(ev.accessCode);
-            setEventSalt(ev.accessCode);
+            const ev = await tixApi.getByEventNo(no, true);
+            setEventNo(ev.eventNo ?? no);
             setEventName(ev.name);
             setEventId(ev.id);
+            if (ev.eventDate) setEventDate(String(ev.eventDate).slice(0, 10));
             setPersistedInDb(true);
             setStats(ev.stats);
-            setTickets([]);
+            const list = (ev.tickets ?? []).map((t) => ({
+                ticketNo: t.ticketNo,
+                code: t.code || t.barcode,
+            }));
+            setTickets(list);
+            setPreviewTicketNo(list[0]?.ticketNo ?? 1);
             setGeneratedJson(null);
+            setAccessCode('');
             setStatusMsg('');
             setScreen('scan');
         } catch (err) {
@@ -334,9 +340,12 @@ export default function TicketCheckinPage() {
         try {
             const savedEvent = await tixApi.saveToDb({
                 name: eventName.trim() || undefined,
+                eventNo: Number(eventNo),
+                date: eventDate,
                 accessCode: accessCode.trim(),
                 tickets,
             });
+            if (savedEvent.eventNo) setEventNo(savedEvent.eventNo);
             setPersistedInDb(true);
             setEventId(savedEvent.id);
             setGeneratedJson((prev) =>
@@ -386,10 +395,9 @@ export default function TicketCheckinPage() {
     const verifyCode = useCallback(
         async (code: string) => {
             const barcode = code.trim();
-            const salt = accessCode.trim();
-            if (!barcode || !salt) {
+            if (!barcode) {
                 setLastResult('reject');
-                setLastMessage('Немає коду заходу або штрихкоду');
+                setLastMessage('Порожній штрихкод');
                 return;
             }
             if (!canVerifyInDb) {
@@ -403,7 +411,10 @@ export default function TicketCheckinPage() {
             setLastResult(null);
             setLastMessage('Перевірка…');
             try {
-                const result = await tixApi.scan({ accessCode: salt, barcode });
+                const result = await tixApi.scan({
+                    eventNo: Number(eventNo),
+                    barcode,
+                });
                 setStats(result.stats);
                 if (result.ok) {
                     setLastResult('ok');
@@ -425,7 +436,7 @@ export default function TicketCheckinPage() {
                 setScanning(false);
             }
         },
-        [accessCode, canVerifyInDb, scanning],
+        [eventNo, canVerifyInDb, scanning],
     );
 
     const handleManualScan = (e: React.FormEvent) => {
@@ -440,15 +451,24 @@ export default function TicketCheckinPage() {
         if ((screen !== 'checkin' && screen !== 'scan') || !canVerifyInDb) return;
         let cancelled = false;
         tixApi
-            .getByCode(accessCode.trim())
+            .getByEventNo(Number(eventNo), screen === 'scan')
             .then((ev) => {
-                if (!cancelled) setStats(ev.stats);
+                if (cancelled) return;
+                setStats(ev.stats);
+                if (screen === 'scan' && ev.tickets?.length) {
+                    setTickets(
+                        ev.tickets.map((t) => ({
+                            ticketNo: t.ticketNo,
+                            code: t.code || t.barcode,
+                        })),
+                    );
+                }
             })
             .catch(() => undefined);
         return () => {
             cancelled = true;
         };
-    }, [screen, canVerifyInDb, accessCode]);
+    }, [screen, canVerifyInDb, eventNo]);
 
     if (role !== 'admin') {
         return <div className="p-8 text-center opacity-60">Завантаження...</div>;
@@ -506,15 +526,16 @@ export default function TicketCheckinPage() {
                     </button>
                     <h2 className="text-xl font-bold">Сканування</h2>
                     <p className="text-sm opacity-70">
-                        Введи код заходу (сіль) — той, з яким квитки вже забиті в базу.
+                        Введи номер заходу (квитки мають бути вже в базі).
                     </p>
                     <input
+                        type="number"
+                        min={1}
                         className="input input-bordered w-full font-mono"
-                        placeholder="Код заходу"
-                        value={scanLoginCode}
-                        onChange={(e) => setScanLoginCode(e.target.value)}
+                        placeholder="Номер заходу"
+                        value={scanEventNo}
+                        onChange={(e) => setScanEventNo(Number(e.target.value))}
                         autoFocus
-                        autoComplete="off"
                         required
                     />
                     {statusMsg && <p className="text-sm text-error">{statusMsg}</p>}
@@ -541,9 +562,44 @@ export default function TicketCheckinPage() {
 
                     <div className="rounded-xl border border-base-content/10 p-4 space-y-1">
                         {eventName && <div className="font-semibold">{eventName}</div>}
-                        <div className="text-xs opacity-60">Код заходу</div>
-                        <div className="font-mono text-lg font-semibold">{accessCode}</div>
+                        <div className="text-xs opacity-60">Номер заходу</div>
+                        <div className="font-mono text-lg font-semibold">№{eventNo}</div>
+                        <div className="text-sm opacity-70">Квитків: {tickets.length}</div>
                     </div>
+
+                    {tickets.length > 0 && (
+                        <div className="rounded-xl border border-base-content/10 p-4 space-y-3">
+                            <h2 className="font-semibold">Штрихкод (Code128)</h2>
+                            <p className="text-sm opacity-70">
+                                Картинка для тесту / друку. Наведи камеру на неї.
+                            </p>
+                            <label className="form-control w-full max-w-xs">
+                                <span className="label-text text-sm opacity-70">№ квитка</span>
+                                <select
+                                    className="select select-bordered select-sm"
+                                    value={previewTicketNo}
+                                    onChange={(e) => setPreviewTicketNo(Number(e.target.value))}
+                                >
+                                    {tickets.map((t) => (
+                                        <option key={t.ticketNo} value={t.ticketNo}>
+                                            №{t.ticketNo}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                            {(() => {
+                                const t =
+                                    tickets.find((x) => x.ticketNo === previewTicketNo) ||
+                                    tickets[0];
+                                return t ? (
+                                    <TicketBarcodeImage
+                                        value={t.code}
+                                        label={`Квиток №${t.ticketNo}`}
+                                    />
+                                ) : null;
+                            })()}
+                        </div>
+                    )}
 
                     <div className="space-y-3">
                         <div className="flex items-center justify-between gap-2">
