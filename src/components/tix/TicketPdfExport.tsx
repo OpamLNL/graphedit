@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import type { TixTicketCode } from '../../api/tix';
+import { tixApi, type TixTicketCode } from '../../api/tix';
 import type { PdfBarcodeLayout, PdfBarcodeOrientation } from '../../utils/tixPdf';
 
 type Props = {
@@ -54,6 +54,7 @@ export default function TicketPdfExport({ onBack }: Props) {
 
     const [layout, setLayout] = useState<PdfBarcodeLayout>(DEFAULT_LAYOUT);
     const [busy, setBusy] = useState(false);
+    const [dbBusy, setDbBusy] = useState(false);
     const [progress, setProgress] = useState('');
     const [error, setError] = useState('');
 
@@ -128,6 +129,28 @@ export default function TicketPdfExport({ onBack }: Props) {
         }
     };
 
+    const applyTicketList = (
+        next: TixTicketCode[],
+        opts?: { eventNo?: string; name?: string; keepRange?: boolean },
+    ) => {
+        if (!next.length) throw new Error('Немає квитків у діапазоні');
+        setTickets(next);
+        if (opts?.eventNo) setMetaNo(opts.eventNo);
+        if (opts?.name) setMetaName(opts.name);
+        const nos = next.map((t) => t.ticketNo);
+        if (!opts?.keepRange) {
+            setFromNo(Math.min(...nos));
+            setToNo(Math.max(...nos));
+        }
+        const payload = {
+            eventNo: opts?.eventNo ?? metaNo.trim(),
+            name: opts?.name ?? metaName.trim(),
+            tickets: next,
+        };
+        setJsonText(JSON.stringify(payload, null, 2));
+        setProgress(`Завантажено: ${next.length} квитків`);
+    };
+
     const applyJson = () => {
         setError('');
         setProgress('');
@@ -153,7 +176,8 @@ export default function TicketPdfExport({ onBack }: Props) {
                 }
                 throw new Error(`Невірний елемент #${idx + 1}`);
             });
-            setTickets(next);
+            let eventNo = metaNo.trim();
+            let name = metaName.trim();
             if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
                 const o = raw as {
                     eventNo?: string | number;
@@ -161,19 +185,80 @@ export default function TicketPdfExport({ onBack }: Props) {
                     eventName?: string;
                 };
                 if (o.eventNo != null && String(o.eventNo).trim()) {
-                    setMetaNo(String(o.eventNo).trim());
+                    eventNo = String(o.eventNo).trim();
                 }
                 const n = o.name || o.eventName;
-                if (n) setMetaName(String(n));
+                if (n) name = String(n);
             }
-            const nos = next.map((t) => t.ticketNo);
-            setFromNo(Math.min(...nos));
-            setToNo(Math.max(...nos));
-            setProgress(`JSON: ${next.length} квитків`);
+            applyTicketList(next, { eventNo, name });
         } catch (err) {
             setTickets([]);
             setError(err instanceof Error ? err.message : 'Помилка JSON');
         }
+    };
+
+    const loadFromDb = async () => {
+        setError('');
+        setProgress('');
+        const eventNo = metaNo.trim();
+        if (!eventNo) {
+            setError('Вкажи номер заходу');
+            return;
+        }
+        if (!Number.isFinite(fromNo) || !Number.isFinite(toNo) || fromNo < 1 || toNo < 1) {
+            setError('Вкажи діапазон квитків (з № / по №)');
+            return;
+        }
+        setDbBusy(true);
+        try {
+            const ev = await tixApi.getByEventNo(eventNo, true);
+            const all: TixTicketCode[] = (ev.tickets ?? []).map((t) => ({
+                ticketNo: t.ticketNo,
+                code: String(t.code || t.barcode || ''),
+            })).filter((t) => t.code);
+            if (!all.length) {
+                throw new Error(`У заході №${eventNo} немає квитків у базі`);
+            }
+            const next = filterByRange(all, fromNo, toNo);
+            if (!next.length) {
+                const nos = all.map((t) => t.ticketNo);
+                throw new Error(
+                    `У діапазоні ${Math.min(fromNo, toNo)}–${Math.max(fromNo, toNo)} немає квитків (у базі: ${Math.min(...nos)}–${Math.max(...nos)})`,
+                );
+            }
+            applyTicketList(next, {
+                eventNo: String(ev.eventNo ?? eventNo),
+                name: ev.name || metaName.trim(),
+                keepRange: true,
+            });
+        } catch (err) {
+            setTickets([]);
+            setError(err instanceof Error ? err.message : 'Помилка завантаження з бази');
+        } finally {
+            setDbBusy(false);
+        }
+    };
+
+    const downloadJson = () => {
+        if (!ranged.length) {
+            setError('Немає квитків для JSON');
+            return;
+        }
+        const payload = {
+            eventNo: metaNo.trim(),
+            name: metaName.trim(),
+            tickets: ranged,
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], {
+            type: 'application/json',
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${metaNo.trim() || 'tickets'}_${fromNo}-${toNo}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setProgress(`JSON файл: ${ranged.length} квитків`);
     };
 
     const setOrientation = (orientation: PdfBarcodeOrientation) => {
@@ -265,7 +350,7 @@ export default function TicketPdfExport({ onBack }: Props) {
             </button>
             <h2 className="text-xl font-bold">PDF квитки</h2>
             <p className="text-sm opacity-70">
-                1) шаблон 2) JSON 3) позиція на картинці + орієнтація 4) діапазон → ZIP
+                1) шаблон 2) квитки з бази або JSON 3) позиція + орієнтація → ZIP
             </p>
 
             <label className="form-control w-full">
@@ -343,67 +428,93 @@ export default function TicketPdfExport({ onBack }: Props) {
                 </div>
             </div>
 
-            <div className="space-y-2">
-                <span className="label-text text-sm opacity-70">2. JSON квитків</span>
-                <textarea
-                    className="textarea textarea-bordered w-full font-mono text-xs h-36"
-                    placeholder='{"eventNo":"1","name":"Концерт","tickets":[{"ticketNo":1,"code":"…"}]}'
-                    value={jsonText}
-                    onChange={(e) => setJsonText(e.target.value)}
-                />
+            <div className="space-y-3 rounded-xl border border-base-content/10 p-3">
+                <span className="label-text text-sm font-medium opacity-80">
+                    2. Квитки — з бази або JSON
+                </span>
+
+                <div className="grid grid-cols-2 gap-3">
+                    <label className="form-control w-full col-span-2 sm:col-span-1">
+                        <span className="label-text text-sm opacity-70">Номер заходу</span>
+                        <input
+                            className="input input-bordered w-full font-mono"
+                            value={metaNo}
+                            onChange={(e) => setMetaNo(e.target.value)}
+                            placeholder="напр. 7"
+                        />
+                    </label>
+                    <label className="form-control w-full col-span-2 sm:col-span-1">
+                        <span className="label-text text-sm opacity-70">Назва (опційно)</span>
+                        <input
+                            className="input input-bordered w-full"
+                            value={metaName}
+                            onChange={(e) => setMetaName(e.target.value)}
+                            placeholder="підтягнеться з бази"
+                        />
+                    </label>
+                    <label className="form-control w-full">
+                        <span className="label-text text-sm opacity-70">Квитки з №</span>
+                        <input
+                            type="number"
+                            min={1}
+                            className="input input-bordered w-full"
+                            value={fromNo}
+                            onChange={(e) => setFromNo(Number(e.target.value) || 1)}
+                        />
+                    </label>
+                    <label className="form-control w-full">
+                        <span className="label-text text-sm opacity-70">по №</span>
+                        <input
+                            type="number"
+                            min={1}
+                            className="input input-bordered w-full"
+                            value={toNo}
+                            onChange={(e) => setToNo(Number(e.target.value) || 1)}
+                        />
+                    </label>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                    <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        disabled={dbBusy || busy}
+                        onClick={() => void loadFromDb()}
+                    >
+                        {dbBusy ? 'Завантаження…' : 'З бази → JSON'}
+                    </button>
+                    <button
+                        type="button"
+                        className="btn btn-outline btn-sm"
+                        disabled={!ranged.length}
+                        onClick={downloadJson}
+                    >
+                        Скачати JSON
+                    </button>
+                </div>
+
+                <label className="form-control w-full">
+                    <span className="label-text text-xs opacity-60">
+                        Або встав JSON вручну і натисни «Застосувати JSON»
+                    </span>
+                    <textarea
+                        className="textarea textarea-bordered w-full font-mono text-xs h-36"
+                        placeholder='{"eventNo":"1","name":"Концерт","tickets":[{"ticketNo":1,"code":"…"}]}'
+                        value={jsonText}
+                        onChange={(e) => setJsonText(e.target.value)}
+                    />
+                </label>
                 <button type="button" className="btn btn-outline btn-sm w-full" onClick={applyJson}>
-                    Завантажити JSON
+                    Застосувати JSON
                 </button>
-            </div>
 
-            <div className="grid grid-cols-2 gap-3">
-                <label className="form-control w-full">
-                    <span className="label-text text-sm opacity-70">Номер заходу</span>
-                    <input
-                        className="input input-bordered w-full font-mono"
-                        value={metaNo}
-                        onChange={(e) => setMetaNo(e.target.value)}
-                        placeholder="з JSON або вручну"
-                    />
-                </label>
-                <label className="form-control w-full">
-                    <span className="label-text text-sm opacity-70">Назва заходу</span>
-                    <input
-                        className="input input-bordered w-full"
-                        value={metaName}
-                        onChange={(e) => setMetaName(e.target.value)}
-                        placeholder="з JSON або вручну"
-                    />
-                </label>
+                <p className="text-sm opacity-70">
+                    У діапазоні: <span className="font-semibold">{ranged.length}</span>
+                    {tickets.length
+                        ? ` (завантажено: ${tickets.length})`
+                        : ' — з бази або JSON'}
+                </p>
             </div>
-
-            <div className="grid grid-cols-2 gap-3">
-                <label className="form-control w-full">
-                    <span className="label-text text-sm opacity-70">4. Квитки з №</span>
-                    <input
-                        type="number"
-                        min={1}
-                        className="input input-bordered w-full"
-                        value={fromNo}
-                        onChange={(e) => setFromNo(Number(e.target.value) || 1)}
-                    />
-                </label>
-                <label className="form-control w-full">
-                    <span className="label-text text-sm opacity-70">по №</span>
-                    <input
-                        type="number"
-                        min={1}
-                        className="input input-bordered w-full"
-                        value={toNo}
-                        onChange={(e) => setToNo(Number(e.target.value) || 1)}
-                    />
-                </label>
-            </div>
-
-            <p className="text-sm opacity-70">
-                У діапазоні: <span className="font-semibold">{ranged.length}</span>
-                {tickets.length ? ` (з JSON: ${tickets.length})` : ' — спочатку завантаж JSON'}
-            </p>
 
             {error ? <p className="text-sm text-error">{error}</p> : null}
             {progress ? <p className="text-sm opacity-80">{progress}</p> : null}
