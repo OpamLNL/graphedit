@@ -154,7 +154,10 @@ export default function TicketCheckinPage() {
     return (
         <div className="max-w-xl mx-auto p-6 space-y-6">
             <div className="flex items-center justify-between gap-4">
-                <h1 className="text-2xl font-bold">Квитки / штрихкоди</h1>
+                <div>
+                    <h1 className="text-2xl font-bold">Квитки / штрихкоди</h1>
+                    <p className="text-xs text-primary font-mono mt-1">UI v2 · gen/import</p>
+                </div>
                 <Link to="/admin/adminPage" className="btn btn-ghost btn-sm">
                     ← Адмінка
                 </Link>
@@ -162,10 +165,12 @@ export default function TicketCheckinPage() {
 
             {screen === 'hub' && (
                 <div className="space-y-4">
-                    <p className="text-sm opacity-70">
-                        Спочатку створіть або імпортуйте штрихкоди. Код концерту зʼявиться після
-                        генерації.
-                    </p>
+                    <div className="rounded-xl bg-primary/10 border border-primary/30 p-4">
+                        <p className="text-sm font-medium">
+                            Крок 1: згенеруй або імпортуй штрихкоди. Сканер відкриється після
+                            цього.
+                        </p>
+                    </div>
                     <button type="button" className="btn btn-primary w-full" onClick={openGenerate}>
                         Згенерувати штрихкоди
                     </button>
