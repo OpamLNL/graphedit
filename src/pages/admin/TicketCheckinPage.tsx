@@ -61,7 +61,7 @@ export default function TicketCheckinPage() {
         const salt = eventSalt.trim();
         const count = Number(ticketCount);
         if (!salt || !count || count < 1 || count > 5000) {
-            setStatusMsg('Вкажіть сіль концерту і кількість квитків (1–5000).');
+            setStatusMsg('Вкажіть код концерту і кількість квитків (1–5000).');
             return;
         }
         const generated = Array.from({ length: count }, (_, i) => {
