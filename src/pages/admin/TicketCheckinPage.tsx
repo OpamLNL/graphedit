@@ -21,6 +21,7 @@ export default function TicketCheckinPage() {
     const [screen, setScreen] = useState<Screen>('hub');
     const [eventNo, setEventNo] = useState(1);
     const [eventDate, setEventDate] = useState(todayIso());
+    const [eventSalt, setEventSalt] = useState('');
     const [eventName, setEventName] = useState('');
     const [ticketCount, setTicketCount] = useState(50);
     const [importText, setImportText] = useState('');
@@ -49,6 +50,7 @@ export default function TicketCheckinPage() {
     const openGenerate = () => {
         setEventNo(1);
         setEventDate(todayIso());
+        setEventSalt('');
         setEventName('');
         setTicketCount(50);
         setStatusMsg('');
@@ -63,8 +65,9 @@ export default function TicketCheckinPage() {
 
     const handleGenerate = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!eventNo || eventNo < 1 || !eventDate || !ticketCount) {
-            setStatusMsg('Вкажіть номер заходу, дату і кількість квитків.');
+        const salt = eventSalt.trim();
+        if (!eventNo || eventNo < 1 || !eventDate || !salt || !ticketCount) {
+            setStatusMsg('Вкажіть номер, дату, код заходу (сіль) і кількість квитків.');
             return;
         }
         setBusy(true);
@@ -73,6 +76,7 @@ export default function TicketCheckinPage() {
             const result = await tixApi.generateCodes({
                 eventNo: Number(eventNo),
                 date: eventDate,
+                accessCode: salt,
                 ticketCount: Number(ticketCount),
                 name: eventName.trim() || undefined,
                 persist: true,
@@ -228,7 +232,8 @@ export default function TicketCheckinPage() {
                         ← Назад
                     </button>
                     <p className="text-sm opacity-70">
-                        Номер заходу + дата → JSON кодів ({`{ ticketNo, code }`}) і запис у БД.
+                        Код заходу = сіль (ви вводите). Код квитка:{' '}
+                        <code className="text-xs">{`{сіль}-{0001}`}</code>
                     </p>
                     <label className="form-control w-full">
                         <span className="label-text text-sm opacity-70">Назва (опційно)</span>
@@ -258,6 +263,19 @@ export default function TicketCheckinPage() {
                             value={eventDate}
                             onChange={(e) => setEventDate(e.target.value)}
                             required
+                        />
+                    </label>
+                    <label className="form-control w-full">
+                        <span className="label-text text-sm opacity-70">
+                            Код заходу (сіль) — секретний
+                        </span>
+                        <input
+                            className="input input-bordered w-full font-mono"
+                            placeholder="напр. YAS-x7k9m2"
+                            value={eventSalt}
+                            onChange={(e) => setEventSalt(e.target.value)}
+                            required
+                            autoComplete="off"
                         />
                     </label>
                     <label className="form-control w-full">

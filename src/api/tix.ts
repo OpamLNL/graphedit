@@ -14,6 +14,7 @@ export const tixApi = {
     generateCodes: (body: {
         eventNo: number;
         date: string;
+        accessCode: string;
         ticketCount: number;
         name?: string;
         persist?: boolean;
