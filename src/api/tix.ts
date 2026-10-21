@@ -2,6 +2,13 @@ import { apiFetch } from './client';
 
 export type TixTicketCode = { ticketNo: number; code: string };
 
+export type TixStats = {
+    total: number;
+    sold: number;
+    used: number;
+    remaining: number;
+};
+
 export type TixGeneratedCodes = {
     eventNo: number;
     date: string;
@@ -12,11 +19,16 @@ export type TixGeneratedCodes = {
     tickets: TixTicketCode[];
 };
 
-export type TixStats = {
-    total: number;
-    sold: number;
-    used: number;
-    remaining: number;
+export type TixAppendedCodes = {
+    eventNo: number | null | undefined;
+    date: string;
+    name: string;
+    eventId: number;
+    appendedFrom: number;
+    appendedCount: number;
+    appended: TixTicketCode[];
+    stats: TixStats;
+    tickets?: TixTicketCode[];
 };
 
 export type TixEventSaved = {
@@ -67,11 +79,22 @@ export const tixApi = {
             body: JSON.stringify(body),
         }),
 
-    /** Забити захід + квитки в БД */
+    /** Додати нові квитки до існуючого заходу (номери з продовженням) */
+    appendCodes: (body: {
+        eventNo: number;
+        accessCode: string;
+        ticketCount: number;
+    }) =>
+        apiFetch<TixAppendedCodes>('/admin/tix/codes/append', {
+            method: 'POST',
+            body: JSON.stringify(body),
+        }),
+
+    /** Забити захід + квитки в БД (обовʼязково eventNo + date) */
     saveToDb: (body: {
         name?: string;
-        eventNo?: number;
-        date?: string;
+        eventNo: number;
+        date: string;
         accessCode: string;
         tickets: { ticketNo: number; code: string }[];
     }) =>

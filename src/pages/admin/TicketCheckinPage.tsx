@@ -57,7 +57,7 @@ function loadState(): Partial<PersistedState> | null {
 }
 
 export default function TicketCheckinPage() {
-    const { user, role } = useAuth();
+    const { user, role, loading: authLoading } = useAuth();
     const navigate = useNavigate();
     const saved = loadState();
 
@@ -88,13 +88,15 @@ export default function TicketCheckinPage() {
     const [scanning, setScanning] = useState(false);
     const [previewTicketNo, setPreviewTicketNo] = useState(1);
     const [scanEventNo, setScanEventNo] = useState<number>(saved?.eventNo ?? 1);
+    /** false = новий захід; true = догенерувати квитки до існуючого */
+    const [appendMode, setAppendMode] = useState(false);
 
     const canVerifyInDb = persistedInDb && eventNo >= 1;
 
     useEffect(() => {
-        if (!user) return navigate('/');
-        if (role !== 'admin') return navigate('/');
-    }, [user, role, navigate]);
+        if (authLoading) return;
+        if (!user || role !== 'admin') navigate('/');
+    }, [user, role, authLoading, navigate]);
 
     useEffect(() => {
         setHydrated(true);
@@ -243,10 +245,69 @@ export default function TicketCheckinPage() {
     const handleGenerate = async (e: React.FormEvent) => {
         e.preventDefault();
         const salt = eventSalt.trim();
-        if (!eventNo || eventNo < 1 || !eventDate || !salt || !ticketCount) {
-            setStatusMsg('Вкажіть номер, дату, код заходу (сіль) і кількість квитків.');
+        if (!eventNo || eventNo < 1 || !salt || !ticketCount) {
+            setStatusMsg('Вкажіть номер заходу, сіль і кількість квитків.');
             return;
         }
+
+        if (appendMode) {
+            setBusy(true);
+            setStatusMsg('');
+            try {
+                const result = await tixApi.appendCodes({
+                    eventNo: Number(eventNo),
+                    accessCode: salt,
+                    ticketCount: Number(ticketCount),
+                });
+                const list = result.tickets?.length
+                    ? result.tickets
+                    : result.appended;
+                setEventNo(Number(result.eventNo ?? eventNo));
+                if (result.date) setEventDate(String(result.date).slice(0, 10));
+                setEventName(result.name);
+                setAccessCode(salt);
+                setEventSalt(salt);
+                setTickets(list);
+                setPreviewTicketNo(
+                    result.appended[0]?.ticketNo ?? list[list.length - 1]?.ticketNo ?? 1,
+                );
+                setPersistedInDb(true);
+                setEventId(result.eventId);
+                setStats(result.stats);
+                setGeneratedJson({
+                    eventNo: Number(result.eventNo ?? eventNo),
+                    date: String(result.date).slice(0, 10),
+                    accessCode: salt,
+                    name: result.name,
+                    eventId: result.eventId,
+                    persisted: true,
+                    tickets: list,
+                });
+                setStatusMsg(
+                    `Додано квитки №${result.appendedFrom}–№${
+                        result.appendedFrom + result.appendedCount - 1
+                    } до заходу №${result.eventNo}. Усього ${result.stats.total}.`,
+                );
+                setScreen('checkin');
+            } catch (err) {
+                setStatusMsg(
+                    err instanceof ApiError
+                        ? err.message
+                        : err instanceof Error
+                          ? err.message
+                          : 'Помилка догенерації',
+                );
+            } finally {
+                setBusy(false);
+            }
+            return;
+        }
+
+        if (!eventDate) {
+            setStatusMsg('Вкажіть дату заходу.');
+            return;
+        }
+
         setBusy(true);
         setStatusMsg('');
         try {
@@ -256,16 +317,20 @@ export default function TicketCheckinPage() {
                 accessCode: salt,
                 ticketCount: Number(ticketCount),
                 name: eventName.trim() || undefined,
-                persist: false,
+                persist: true,
             });
             setGeneratedJson(result);
             setAccessCode(result.accessCode);
             setEventName(result.name);
+            setEventNo(result.eventNo);
             setTickets(result.tickets);
-            setPersistedInDb(false);
-            setEventId(undefined);
+            setPreviewTicketNo(result.tickets[0]?.ticketNo ?? 1);
+            setPersistedInDb(Boolean(result.persisted));
+            setEventId(result.eventId);
             setStatusMsg(
-                `Згенеровано ${result.tickets.length} кодів. Натисни «Забити у базу», щоб зберегти.`,
+                result.persisted
+                    ? `Захід №${result.eventNo}: збережено ${result.tickets.length} квитків (№1–№${result.tickets.length}).`
+                    : `Згенеровано ${result.tickets.length} кодів. Натисни «Забити у базу».`,
             );
             setScreen('checkin');
         } catch (err) {
@@ -316,6 +381,20 @@ export default function TicketCheckinPage() {
             if (!codeFromJson.trim()) {
                 throw new Error('У JSON потрібен accessCode (код заходу / сіль)');
             }
+            const eventNoFromJson =
+                !Array.isArray(raw) && raw && typeof raw === 'object'
+                    ? Number((raw as { eventNo?: number }).eventNo)
+                    : NaN;
+            if (!Number.isInteger(eventNoFromJson) || eventNoFromJson < 1) {
+                throw new Error('У JSON потрібен eventNo (номер заходу ≥ 1)');
+            }
+            const dateFromJson =
+                !Array.isArray(raw) && raw && typeof raw === 'object'
+                    ? String((raw as { date?: string }).date || '')
+                    : '';
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFromJson)) {
+                throw new Error('У JSON потрібна date у форматі YYYY-MM-DD');
+            }
             const nameFromJson =
                 !Array.isArray(raw) && raw && typeof raw === 'object'
                     ? String(
@@ -327,18 +406,12 @@ export default function TicketCheckinPage() {
             setAccessCode(codeFromJson);
             setEventSalt(codeFromJson);
             setEventName(nameFromJson);
-            if (!Array.isArray(raw) && raw && typeof raw === 'object') {
-                if ((raw as { eventNo?: number }).eventNo) {
-                    setEventNo(Number((raw as { eventNo: number }).eventNo));
-                }
-                if ((raw as { date?: string }).date) {
-                    setEventDate(String((raw as { date: string }).date));
-                }
-            }
+            setEventNo(eventNoFromJson);
+            setEventDate(dateFromJson);
             setTickets(parsed);
             setGeneratedJson({
-                eventNo: Number((raw as { eventNo?: number }).eventNo) || eventNo,
-                date: String((raw as { date?: string }).date || eventDate),
+                eventNo: eventNoFromJson,
+                date: dateFromJson,
                 accessCode: codeFromJson,
                 name: nameFromJson,
                 persisted: false,
@@ -358,6 +431,10 @@ export default function TicketCheckinPage() {
     const handleSaveToDb = async () => {
         if (!accessCode.trim() || !tickets.length) {
             setStatusMsg('Немає кодів для збереження.');
+            return;
+        }
+        if (!eventNo || eventNo < 1 || !eventDate) {
+            setStatusMsg('Потрібні номер і дата заходу перед збереженням.');
             return;
         }
         if (persistedInDb) {
@@ -384,7 +461,7 @@ export default function TicketCheckinPage() {
             );
             setStats(savedEvent.stats);
             setStatusMsg(
-                `Збережено в БД: event #${savedEvent.id}, квитків ${savedEvent.stats.total}.`,
+                `Збережено захід №${savedEvent.eventNo ?? eventNo}: квитків ${savedEvent.stats.total} (номери квитків, не id рядка).`,
             );
         } catch (err) {
             const msg =
@@ -499,7 +576,7 @@ export default function TicketCheckinPage() {
         };
     }, [screen, canVerifyInDb, eventNo]);
 
-    if (role !== 'admin') {
+    if (authLoading || role !== 'admin') {
         return <div className="p-8 text-center opacity-60">Завантаження...</div>;
     }
 
@@ -774,17 +851,36 @@ export default function TicketCheckinPage() {
                         ← Назад
                     </button>
                     <p className="text-sm opacity-70">
-                        Код заходу = сіль (лише на сервері). У квитку — HMAC-хеш.
+                        Код заходу = сіль (лише на сервері). У квитку — HMAC-хеш і номер
+                        квитка, не id з БД.
                     </p>
-                    <label className="form-control w-full">
-                        <span className="label-text text-sm opacity-70">Назва (опційно)</span>
-                        <input
-                            className="input input-bordered w-full"
-                            placeholder="Назва концерту"
-                            value={eventName}
-                            onChange={(e) => setEventName(e.target.value)}
-                        />
-                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button
+                            type="button"
+                            className={`btn btn-sm ${!appendMode ? 'btn-primary' : 'btn-ghost'}`}
+                            onClick={() => setAppendMode(false)}
+                        >
+                            Новий захід
+                        </button>
+                        <button
+                            type="button"
+                            className={`btn btn-sm ${appendMode ? 'btn-primary' : 'btn-ghost'}`}
+                            onClick={() => setAppendMode(true)}
+                        >
+                            Догенерувати
+                        </button>
+                    </div>
+                    {!appendMode && (
+                        <label className="form-control w-full">
+                            <span className="label-text text-sm opacity-70">Назва (опційно)</span>
+                            <input
+                                className="input input-bordered w-full"
+                                placeholder="Назва концерту"
+                                value={eventName}
+                                onChange={(e) => setEventName(e.target.value)}
+                            />
+                        </label>
+                    )}
                     <label className="form-control w-full">
                         <span className="label-text text-sm opacity-70">Номер заходу</span>
                         <input
@@ -796,16 +892,18 @@ export default function TicketCheckinPage() {
                             required
                         />
                     </label>
-                    <label className="form-control w-full">
-                        <span className="label-text text-sm opacity-70">Дата заходу</span>
-                        <input
-                            type="date"
-                            className="input input-bordered w-full"
-                            value={eventDate}
-                            onChange={(e) => setEventDate(e.target.value)}
-                            required
-                        />
-                    </label>
+                    {!appendMode && (
+                        <label className="form-control w-full">
+                            <span className="label-text text-sm opacity-70">Дата заходу</span>
+                            <input
+                                type="date"
+                                className="input input-bordered w-full"
+                                value={eventDate}
+                                onChange={(e) => setEventDate(e.target.value)}
+                                required
+                            />
+                        </label>
+                    )}
                     <label className="form-control w-full">
                         <span className="label-text text-sm opacity-70">
                             Код заходу (сіль) — секретний
@@ -820,7 +918,9 @@ export default function TicketCheckinPage() {
                         />
                     </label>
                     <label className="form-control w-full">
-                        <span className="label-text text-sm opacity-70">Кількість квитків</span>
+                        <span className="label-text text-sm opacity-70">
+                            {appendMode ? 'Скільки додати квитків' : 'Кількість квитків'}
+                        </span>
                         <input
                             type="number"
                             min={1}
@@ -831,9 +931,20 @@ export default function TicketCheckinPage() {
                             required
                         />
                     </label>
+                    {appendMode && (
+                        <p className="text-sm opacity-60">
+                            Номери квитків продовжаться з наступного після останнього в БД.
+                        </p>
+                    )}
                     {statusMsg && <p className="text-sm text-error">{statusMsg}</p>}
                     <button type="submit" className="btn btn-primary w-full" disabled={busy}>
-                        {busy ? 'Генерація…' : 'Згенерувати JSON'}
+                        {busy
+                            ? appendMode
+                                ? 'Догенерація…'
+                                : 'Генерація…'
+                            : appendMode
+                              ? 'Додати квитки до заходу'
+                              : 'Згенерувати і зберегти в БД'}
                     </button>
                 </form>
             )}
@@ -844,12 +955,12 @@ export default function TicketCheckinPage() {
                         ← Назад
                     </button>
                     <p className="text-sm opacity-70">
-                        Вставте JSON:{' '}
-                        <code className="text-xs">{`accessCode + tickets: [{ ticketNo, code }]`}</code>
+                        Вставте JSON з{' '}
+                        <code className="text-xs">eventNo, date, accessCode, tickets</code>
                     </p>
                     <textarea
                         className="textarea textarea-bordered w-full font-mono text-xs h-48"
-                        placeholder='{"accessCode":"YAS-x7k9m2","tickets":[{"ticketNo":1,"code":"a3f8…"}]}'
+                        placeholder='{"eventNo":12,"date":"2026-11-15","accessCode":"YAS-x7k9m2","tickets":[{"ticketNo":1,"code":"a3f8…"}]}'
                         value={importText}
                         onChange={(e) => setImportText(e.target.value)}
                         required
@@ -874,28 +985,51 @@ export default function TicketCheckinPage() {
 
                     <div className="rounded-xl border border-base-content/10 p-4 space-y-1">
                         {eventName && <div className="font-semibold">{eventName}</div>}
-                        <div className="text-xs opacity-60">Код заходу (сіль / accessCode)</div>
-                        <div className="font-mono text-lg font-semibold">{accessCode || '—'}</div>
-                        <div className="text-sm opacity-70">Квитків: {tickets.length}</div>
+                        <div className="text-xs opacity-60">Номер заходу</div>
+                        <div className="font-mono text-lg font-semibold">№{eventNo}</div>
+                        <div className="text-sm opacity-70">
+                            Дата: {eventDate || '—'} · квитків: {tickets.length}
+                            {tickets.length > 0
+                                ? ` (№${tickets[0].ticketNo}–№${tickets[tickets.length - 1].ticketNo})`
+                                : ''}
+                        </div>
+                        <div className="text-xs opacity-50 font-mono break-all">
+                            сіль: {accessCode || '—'}
+                        </div>
                         <div className="text-sm">
                             БД:{' '}
                             {persistedInDb ? (
                                 <span className="text-success font-medium">
-                                    збережено{eventId ? ` (#${eventId})` : ''}
+                                    збережено як захід №{eventNo}
                                 </span>
                             ) : (
                                 <span className="text-warning font-medium">ще не в базі</span>
                             )}
                         </div>
                         <div className="flex flex-wrap gap-2 mt-3">
-                            <button
-                                type="button"
-                                className="btn btn-primary btn-sm"
-                                onClick={handleSaveToDb}
-                                disabled={busy || persistedInDb || !tickets.length}
-                            >
-                                {busy ? 'Збереження…' : 'Забити у базу'}
-                            </button>
+                            {!persistedInDb && (
+                                <button
+                                    type="button"
+                                    className="btn btn-primary btn-sm"
+                                    onClick={handleSaveToDb}
+                                    disabled={busy || !tickets.length}
+                                >
+                                    {busy ? 'Збереження…' : 'Забити у базу'}
+                                </button>
+                            )}
+                            {persistedInDb && (
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => {
+                                        setAppendMode(true);
+                                        setScreen('generate');
+                                        setStatusMsg('');
+                                    }}
+                                >
+                                    Догенерувати квитки
+                                </button>
+                            )}
                             <button
                                 type="button"
                                 className="btn btn-outline btn-sm"

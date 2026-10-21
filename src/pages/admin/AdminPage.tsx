@@ -26,18 +26,27 @@ interface ConnectionType {
 }
 
 export default function AdminPage() {
-    const { user, role } = useAuth();
+    const { user, role, loading: authLoading } = useAuth();
     const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
     const [nodes, setNodes] = useState<NodeType[]>([]);
     const [connections, setConnections] = useState<ConnectionType[]>([]);
     const [users, setUsers] = useState<UserType[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
+    const [loadError, setLoadError] = useState('');
     const navigate = useNavigate();
 
     useEffect(() => {
-        if (!user) return navigate('/');
-        if (role !== 'admin') return navigate('/');
+        if (authLoading) return;
+        if (!user) {
+            navigate('/');
+            return;
+        }
+        if (role !== 'admin') {
+            navigate('/');
+            return;
+        }
 
+        setLoadError('');
         Promise.all([
             adminApi.getDashboard(),
             nodesApi.getAll(),
@@ -50,8 +59,13 @@ export default function AdminPage() {
                 setConnections(c);
                 setUsers(u as UserType[]);
             })
-            .catch(console.error);
-    }, [user, role, navigate]);
+            .catch((err: unknown) => {
+                console.error(err);
+                setLoadError(
+                    err instanceof Error ? err.message : 'Не вдалося завантажити панель адміна',
+                );
+            });
+    }, [user, role, authLoading, navigate]);
 
     const handleRoleChange = async (userId: number, newRole: string) => {
         await usersApi.updateRole(userId, newRole);
@@ -63,6 +77,28 @@ export default function AdminPage() {
     const filteredNodes = searchTerm
         ? nodes.filter((n) => n.title.toLowerCase().includes(searchTerm.toLowerCase()))
         : nodes.slice(0, 50);
+
+    if (authLoading || (!dashboard && !loadError && role === 'admin')) {
+        return <div className="p-8 text-center opacity-60">Завантаження панелі адміна...</div>;
+    }
+
+    if (loadError) {
+        return (
+            <div className="max-w-xl mx-auto p-8 space-y-4 text-center">
+                <p className="text-error">{loadError}</p>
+                <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => navigate('/admin/ticket-checkin')}
+                >
+                    Квитки / штрихкоди
+                </button>
+                <button type="button" className="btn btn-ghost" onClick={() => window.location.reload()}>
+                    Оновити сторінку
+                </button>
+            </div>
+        );
+    }
 
     if (!dashboard) {
         return <div className="p-8 text-center opacity-60">Завантаження панелі адміна...</div>;
@@ -77,7 +113,7 @@ export default function AdminPage() {
                     className="btn btn-primary"
                     onClick={() => navigate('/admin/ticket-checkin')}
                 >
-                    Перевірка квитків (QR)
+                    Квитки / штрихкоди
                 </button>
             </div>
 

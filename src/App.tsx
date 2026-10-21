@@ -1,4 +1,5 @@
 import './App.css';
+import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import Navbar from './components/Navbar/Navbar.tsx';
 import Home from './pages/Home';
@@ -13,41 +14,48 @@ import ApiDocsPage from './pages/ApiDocsPage';
 import ProfilePage from './pages/ProfilePage';
 import Login from './pages/Login';
 import AdminPage from './pages/admin/AdminPage.tsx';
-import TicketCheckinPage from './pages/admin/TicketCheckinPage.tsx';
 import TeachingStatsPage from './pages/teaching/TeachingStatsPage';
 import TeachingUsersPage from './pages/teaching/TeachingUsersPage';
 import MapLearnersPage from './pages/teaching/MapLearnersPage';
 import FavoritesPage from './pages/Favorites';
 import UserPublicProfilePage from './pages/UserPublicProfilePage';
 
+const TicketCheckinPage = lazy(() => import('./pages/admin/TicketCheckinPage.tsx'));
+
 function App() {
     return (
         <div className="min-h-screen flex flex-col bg-base-100 text-base-content">
             <Navbar />
             <main className="flex-1">
-                <Routes>
-                    <Route path="/" element={<Home />} />
-                    <Route path="/maps" element={<MapsPage />} />
-                    <Route path="/favorites" element={<FavoritesPage />} />
-                    <Route path="/my-maps" element={<MyMapsPage />} />
-                    <Route path="/map/:mapId" element={<Map />} />
-                    <Route path="/map" element={<Navigate to="/maps" replace />} />
-                    <Route path="/editor/:mapId" element={<EditorPage />} />
-                    <Route path="/editor" element={<Navigate to="/maps" replace />} />
-                    <Route path="/topics" element={<Topics />} />
-                    <Route path="/about" element={<About />} />
-                    <Route path="/api-docs" element={<ApiDocsPage />} />
-                    <Route path="/contact" element={<Contact />} />
-                    <Route path="/profile" element={<ProfilePage />} />
-                    <Route path="/users/:userId" element={<UserPublicProfilePage />} />
-                    <Route path="/teaching" element={<TeachingStatsPage />} />
-                    <Route path="/teaching/users" element={<TeachingUsersPage />} />
-                    <Route path="/teaching/maps/:mapId" element={<MapLearnersPage />} />
-                    <Route path="/progress" element={<Navigate to="/profile" replace />} />
-                    <Route path="/login" element={<Login />} />
-                    <Route path="/admin/adminPage" element={<AdminPage />} />
-                    <Route path="/admin/ticket-checkin" element={<TicketCheckinPage />} />
-                </Routes>
+                <Suspense
+                    fallback={
+                        <div className="p-8 text-center opacity-60">Завантаження…</div>
+                    }
+                >
+                    <Routes>
+                        <Route path="/" element={<Home />} />
+                        <Route path="/maps" element={<MapsPage />} />
+                        <Route path="/favorites" element={<FavoritesPage />} />
+                        <Route path="/my-maps" element={<MyMapsPage />} />
+                        <Route path="/map/:mapId" element={<Map />} />
+                        <Route path="/map" element={<Navigate to="/maps" replace />} />
+                        <Route path="/editor/:mapId" element={<EditorPage />} />
+                        <Route path="/editor" element={<Navigate to="/maps" replace />} />
+                        <Route path="/topics" element={<Topics />} />
+                        <Route path="/about" element={<About />} />
+                        <Route path="/api-docs" element={<ApiDocsPage />} />
+                        <Route path="/contact" element={<Contact />} />
+                        <Route path="/profile" element={<ProfilePage />} />
+                        <Route path="/users/:userId" element={<UserPublicProfilePage />} />
+                        <Route path="/teaching" element={<TeachingStatsPage />} />
+                        <Route path="/teaching/users" element={<TeachingUsersPage />} />
+                        <Route path="/teaching/maps/:mapId" element={<MapLearnersPage />} />
+                        <Route path="/progress" element={<Navigate to="/profile" replace />} />
+                        <Route path="/login" element={<Login />} />
+                        <Route path="/admin/adminPage" element={<AdminPage />} />
+                        <Route path="/admin/ticket-checkin" element={<TicketCheckinPage />} />
+                    </Routes>
+                </Suspense>
             </main>
         </div>
     );
