@@ -11,9 +11,9 @@ import {
 import BarcodeScanner from '../../components/tix/BarcodeScanner';
 import TicketBarcodeImage from '../../components/tix/TicketBarcodeImage';
 
-type Screen = 'hub' | 'generate' | 'import' | 'checkin';
+type Screen = 'hub' | 'generate' | 'import' | 'checkin' | 'scan-login' | 'scan';
 
-const STORAGE_KEY = 'tix-checkin-state-v1';
+const STORAGE_KEY = 'tix-checkin-state-v2';
 
 type PersistedState = {
     screen: Screen;
@@ -78,6 +78,9 @@ export default function TicketCheckinPage() {
     const [scannerOn, setScannerOn] = useState(true);
     const [scanning, setScanning] = useState(false);
     const [previewTicketNo, setPreviewTicketNo] = useState(1);
+    const [scanLoginCode, setScanLoginCode] = useState('');
+
+    const canVerifyInDb = persistedInDb && Boolean(accessCode.trim());
 
     useEffect(() => {
         if (!user) return navigate('/');
@@ -158,6 +161,48 @@ export default function TicketCheckinPage() {
         setImportText('');
         setStatusMsg('');
         setScreen('import');
+    };
+
+    const openScanLogin = () => {
+        setScanLoginCode(accessCode || '');
+        setStatusMsg('');
+        setLastResult(null);
+        setLastMessage('');
+        setScreen('scan-login');
+    };
+
+    const handleScanLogin = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const code = scanLoginCode.trim();
+        if (!code) {
+            setStatusMsg('Введіть код заходу');
+            return;
+        }
+        setBusy(true);
+        setStatusMsg('');
+        try {
+            const ev = await tixApi.getByCode(code);
+            setAccessCode(ev.accessCode);
+            setEventSalt(ev.accessCode);
+            setEventName(ev.name);
+            setEventId(ev.id);
+            setPersistedInDb(true);
+            setStats(ev.stats);
+            setTickets([]);
+            setGeneratedJson(null);
+            setStatusMsg('');
+            setScreen('scan');
+        } catch (err) {
+            setStatusMsg(
+                err instanceof ApiError
+                    ? err.message
+                    : err instanceof Error
+                      ? err.message
+                      : 'Захід не знайдено',
+            );
+        } finally {
+            setBusy(false);
+        }
     };
 
     const handleGenerate = async (e: React.FormEvent) => {
@@ -347,9 +392,9 @@ export default function TicketCheckinPage() {
                 setLastMessage('Немає коду заходу або штрихкоду');
                 return;
             }
-            if (!persistedInDb) {
+            if (!canVerifyInDb) {
                 setLastResult('reject');
-                setLastMessage('Спочатку натисни «Забити у базу» — перевірка йде по БД');
+                setLastMessage('Немає активного заходу з БД');
                 return;
             }
             if (scanning) return;
@@ -380,7 +425,7 @@ export default function TicketCheckinPage() {
                 setScanning(false);
             }
         },
-        [accessCode, persistedInDb, scanning],
+        [accessCode, canVerifyInDb, scanning],
     );
 
     const handleManualScan = (e: React.FormEvent) => {
@@ -392,7 +437,7 @@ export default function TicketCheckinPage() {
     };
 
     useEffect(() => {
-        if (screen !== 'checkin' || !persistedInDb || !accessCode.trim()) return;
+        if ((screen !== 'checkin' && screen !== 'scan') || !canVerifyInDb) return;
         let cancelled = false;
         tixApi
             .getByCode(accessCode.trim())
@@ -403,7 +448,7 @@ export default function TicketCheckinPage() {
         return () => {
             cancelled = true;
         };
-    }, [screen, persistedInDb, accessCode]);
+    }, [screen, canVerifyInDb, accessCode]);
 
     if (role !== 'admin') {
         return <div className="p-8 text-center opacity-60">Завантаження...</div>;
@@ -423,31 +468,146 @@ export default function TicketCheckinPage() {
 
             {screen === 'hub' && (
                 <div className="space-y-4">
-                    <div className="rounded-xl bg-primary/10 border border-primary/30 p-4">
-                        <p className="text-sm font-medium">
-                            Крок 1: згенеруй або імпортуй штрихкоди. Потім «Забити у базу».
-                        </p>
-                    </div>
-                    {tickets.length > 0 && (
-                        <button
-                            type="button"
-                            className="btn btn-secondary w-full"
-                            onClick={() => setScreen('checkin')}
-                        >
-                            Продовжити поточну сесію ({tickets.length} квитків)
-                        </button>
-                    )}
-                    <button type="button" className="btn btn-primary w-full" onClick={openGenerate}>
+                    <button
+                        type="button"
+                        className="btn btn-primary btn-lg w-full"
+                        onClick={openScanLogin}
+                    >
+                        Сканування штрихкодів
+                    </button>
+                    <div className="divider text-xs opacity-50">підготовка квитків</div>
+                    <button type="button" className="btn btn-outline w-full" onClick={openGenerate}>
                         Згенерувати штрихкоди
                     </button>
                     <button type="button" className="btn btn-outline w-full" onClick={openImport}>
                         Імпорт з JSON
                     </button>
                     {tickets.length > 0 && (
+                        <button
+                            type="button"
+                            className="btn btn-ghost w-full"
+                            onClick={() => setScreen('checkin')}
+                        >
+                            Сесія генерації ({tickets.length} квитків)
+                        </button>
+                    )}
+                    {(tickets.length > 0 || canVerifyInDb) && (
                         <button type="button" className="btn btn-ghost btn-sm w-full" onClick={clearSession}>
                             Очистити сесію
                         </button>
                     )}
+                </div>
+            )}
+
+            {screen === 'scan-login' && (
+                <form onSubmit={handleScanLogin} className="space-y-4">
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
+                        ← Назад
+                    </button>
+                    <h2 className="text-xl font-bold">Сканування</h2>
+                    <p className="text-sm opacity-70">
+                        Введи код заходу (сіль) — той, з яким квитки вже забиті в базу.
+                    </p>
+                    <input
+                        className="input input-bordered w-full font-mono"
+                        placeholder="Код заходу"
+                        value={scanLoginCode}
+                        onChange={(e) => setScanLoginCode(e.target.value)}
+                        autoFocus
+                        autoComplete="off"
+                        required
+                    />
+                    {statusMsg && <p className="text-sm text-error">{statusMsg}</p>}
+                    <button type="submit" className="btn btn-primary w-full" disabled={busy}>
+                        {busy ? 'Завантаження…' : 'Відкрити сканер'}
+                    </button>
+                </form>
+            )}
+
+            {screen === 'scan' && (
+                <div className="space-y-6">
+                    <div className="flex flex-wrap gap-2">
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
+                            ← Меню
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={openScanLogin}
+                        >
+                            Інший захід
+                        </button>
+                    </div>
+
+                    <div className="rounded-xl border border-base-content/10 p-4 space-y-1">
+                        {eventName && <div className="font-semibold">{eventName}</div>}
+                        <div className="text-xs opacity-60">Код заходу</div>
+                        <div className="font-mono text-lg font-semibold">{accessCode}</div>
+                    </div>
+
+                    <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-2">
+                            <h2 className="font-semibold">Сканер штрихкодів</h2>
+                            <button
+                                type="button"
+                                className="btn btn-ghost btn-xs"
+                                onClick={() => setScannerOn((v) => !v)}
+                            >
+                                {scannerOn ? 'Вимкнути камеру' : 'Увімкнути камеру'}
+                            </button>
+                        </div>
+                        {scannerOn && (
+                            <BarcodeScanner
+                                onScan={(code) => void verifyCode(code)}
+                                paused={scanning}
+                            />
+                        )}
+                    </div>
+
+                    <form onSubmit={handleManualScan} className="space-y-3">
+                        <label className="text-sm opacity-70">Або код вручну</label>
+                        <input
+                            className="input input-bordered w-full font-mono"
+                            placeholder="Значення зі штрихкоду"
+                            value={manualCode}
+                            onChange={(e) => setManualCode(e.target.value)}
+                            disabled={scanning}
+                        />
+                        <button
+                            type="submit"
+                            className="btn btn-primary w-full"
+                            disabled={scanning}
+                        >
+                            {scanning ? 'Перевірка…' : 'Перевірити в БД'}
+                        </button>
+                    </form>
+
+                    {lastResult && (
+                        <div
+                            className={`rounded-xl p-4 text-center font-semibold text-lg ${
+                                lastResult === 'ok'
+                                    ? 'bg-success/20 text-success'
+                                    : 'bg-error/20 text-error'
+                            }`}
+                        >
+                            {lastMessage}
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-3 gap-3 text-center">
+                        <div className="rounded-xl border border-base-content/10 p-3">
+                            <div className="text-xl font-bold">{stats?.total ?? '—'}</div>
+                            <div className="text-xs opacity-60">Всього</div>
+                        </div>
+                        <div className="rounded-xl border border-base-content/10 p-3">
+                            <div className="text-xl font-bold">{stats?.used ?? '—'}</div>
+                            <div className="text-xs opacity-60">Пройшли</div>
+                        </div>
+                        <div className="rounded-xl border border-base-content/10 p-3">
+                            <div className="text-xl font-bold">{stats?.remaining ?? '—'}</div>
+                            <div className="text-xs opacity-60">Залишилось</div>
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -636,15 +796,15 @@ export default function TicketCheckinPage() {
                                 {scannerOn ? 'Вимкнути камеру' : 'Увімкнути камеру'}
                             </button>
                         </div>
-                        {!persistedInDb && (
+                        {!canVerifyInDb && (
                             <p className="text-sm text-warning">
-                                Перевірка в БД недоступна, поки не натиснеш «Забити у базу».
+                                Спочатку «Забити у базу», або зайди через «Сканування штрихкодів».
                             </p>
                         )}
-                        {scannerOn && screen === 'checkin' && (
+                        {scannerOn && (
                             <BarcodeScanner
                                 onScan={(code) => void verifyCode(code)}
-                                paused={scanning || !persistedInDb}
+                                paused={scanning || !canVerifyInDb}
                             />
                         )}
                     </div>
@@ -653,7 +813,7 @@ export default function TicketCheckinPage() {
                         <label className="text-sm opacity-70">Або введіть код вручну</label>
                         <input
                             className="input input-bordered w-full font-mono"
-                            placeholder="Значення з QR / штрихкоду"
+                            placeholder="Значення зі штрихкоду"
                             value={manualCode}
                             onChange={(e) => setManualCode(e.target.value)}
                             disabled={scanning}
@@ -661,7 +821,7 @@ export default function TicketCheckinPage() {
                         <button
                             type="submit"
                             className="btn btn-primary w-full"
-                            disabled={scanning || !persistedInDb}
+                            disabled={scanning || !canVerifyInDb}
                         >
                             {scanning ? 'Перевірка…' : 'Перевірити в БД'}
                         </button>
