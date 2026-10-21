@@ -232,8 +232,8 @@ export default function TicketCheckinPage() {
                         ← Назад
                     </button>
                     <p className="text-sm opacity-70">
-                        Код заходу = сіль (ви вводите). Код квитка:{' '}
-                        <code className="text-xs">{`{сіль}-{0001}`}</code>
+                        Код заходу = сіль (лише на сервері). У квитку — HMAC-хеш, сіль у коді не
+                        видно.
                     </p>
                     <label className="form-control w-full">
                         <span className="label-text text-sm opacity-70">Назва (опційно)</span>
