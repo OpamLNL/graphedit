@@ -673,13 +673,7 @@ export default function TicketCheckinPage() {
                         <div className="p-8 text-center opacity-60">Завантаження PDF…</div>
                     }
                 >
-                    <TicketPdfExport
-                        eventNo={eventNo}
-                        eventName={eventName}
-                        eventDate={eventDate}
-                        tickets={tickets}
-                        onBack={goHub}
-                    />
+                    <TicketPdfExport onBack={goHub} />
                 </Suspense>
             )}
 
