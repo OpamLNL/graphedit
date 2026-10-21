@@ -21,7 +21,18 @@ type Screen =
     | 'draw-login'
     | 'draw';
 
-const STORAGE_KEY = 'tix-checkin-state-v3';
+const STORAGE_KEY = 'tix-checkin-state-v4';
+
+const SCREENS: Screen[] = [
+    'hub',
+    'generate',
+    'import',
+    'checkin',
+    'scan-login',
+    'scan',
+    'draw-login',
+    'draw',
+];
 
 type PersistedState = {
     screen: Screen;
@@ -36,7 +47,17 @@ type PersistedState = {
     persistedInDb: boolean;
     eventId?: number;
     statusMsg: string;
+    scanEventNo?: number;
 };
+
+function restoreScreen(saved: Partial<PersistedState> | null): Screen {
+    const s = saved?.screen;
+    if (!s || !SCREENS.includes(s)) return 'hub';
+    if ((s === 'scan' || s === 'draw') && !saved?.persistedInDb) {
+        return s === 'scan' ? 'scan-login' : 'draw-login';
+    }
+    return s;
+}
 
 function todayIso(): string {
     const d = new Date();
@@ -48,7 +69,9 @@ function todayIso(): string {
 
 function loadState(): Partial<PersistedState> | null {
     try {
-        const raw = localStorage.getItem(STORAGE_KEY);
+        const raw =
+            localStorage.getItem(STORAGE_KEY) ||
+            localStorage.getItem('tix-checkin-state-v3');
         if (!raw) return null;
         return JSON.parse(raw) as PersistedState;
     } catch {
@@ -61,8 +84,7 @@ export default function TicketCheckinPage() {
     const navigate = useNavigate();
     const saved = loadState();
 
-    // Завжди з меню — три кнопки мають бути видно одразу
-    const [screen, setScreen] = useState<Screen>('hub');
+    const [screen, setScreen] = useState<Screen>(() => restoreScreen(saved));
     const [eventNo, setEventNo] = useState(saved?.eventNo ?? 1);
     const [eventDate, setEventDate] = useState(saved?.eventDate ?? todayIso());
     const [eventSalt, setEventSalt] = useState(saved?.eventSalt ?? '');
@@ -87,7 +109,9 @@ export default function TicketCheckinPage() {
     const [scannerOn, setScannerOn] = useState(true);
     const [scanning, setScanning] = useState(false);
     const [previewTicketNo, setPreviewTicketNo] = useState(1);
-    const [scanEventNo, setScanEventNo] = useState<number>(saved?.eventNo ?? 1);
+    const [scanEventNo, setScanEventNo] = useState<number>(
+        saved?.scanEventNo ?? saved?.eventNo ?? 1,
+    );
     /** false = новий захід; true = догенерувати квитки до існуючого */
     const [appendMode, setAppendMode] = useState(false);
 
@@ -95,7 +119,12 @@ export default function TicketCheckinPage() {
 
     useEffect(() => {
         if (authLoading) return;
-        if (!user || role !== 'admin') navigate('/');
+        if (!user) {
+            navigate('/');
+            return;
+        }
+        // Не кидати на головну, поки роль ще підтягується
+        if (role != null && role !== 'admin') navigate('/');
     }, [user, role, authLoading, navigate]);
 
     useEffect(() => {
@@ -117,6 +146,7 @@ export default function TicketCheckinPage() {
             persistedInDb,
             eventId,
             statusMsg,
+            scanEventNo,
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     }, [
@@ -133,7 +163,18 @@ export default function TicketCheckinPage() {
         persistedInDb,
         eventId,
         statusMsg,
+        scanEventNo,
     ]);
+
+    // Після скану — короткий зелений/червоний фон, потім скидаємо
+    useEffect(() => {
+        if (!lastResult || screen !== 'scan') return;
+        const t = window.setTimeout(() => {
+            setLastResult(null);
+            setLastMessage('');
+        }, 2200);
+        return () => window.clearTimeout(t);
+    }, [lastResult, lastMessage, screen]);
 
     const clearSession = () => {
         localStorage.removeItem(STORAGE_KEY);
@@ -724,122 +765,128 @@ export default function TicketCheckinPage() {
             )}
 
             {screen === 'scan' && (
-                <div className="space-y-6">
-                    <div className="flex flex-wrap gap-2">
-                        <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
-                            ← Меню
-                        </button>
-                        <button
-                            type="button"
-                            className="btn btn-ghost btn-sm"
-                            onClick={openScanLogin}
-                        >
-                            Інший захід
-                        </button>
-                    </div>
-
-                    <div className="rounded-xl border border-base-content/10 p-4 space-y-1">
-                        {eventName && <div className="font-semibold">{eventName}</div>}
-                        <div className="text-xs opacity-60">Номер заходу</div>
-                        <div className="font-mono text-lg font-semibold">№{eventNo}</div>
-                        <div className="text-sm opacity-70">Квитків: {tickets.length}</div>
-                    </div>
-
-                    {tickets.length > 0 && (
-                        <div className="rounded-xl border border-base-content/10 p-4 space-y-3">
-                            <h2 className="font-semibold">Штрихкод (Code128)</h2>
-                            <p className="text-sm opacity-70">
-                                Картинка для тесту / друку. Наведи камеру на неї.
-                            </p>
-                            <label className="form-control w-full max-w-xs">
-                                <span className="label-text text-sm opacity-70">№ квитка</span>
-                                <select
-                                    className="select select-bordered select-sm"
-                                    value={previewTicketNo}
-                                    onChange={(e) => setPreviewTicketNo(Number(e.target.value))}
-                                >
-                                    {tickets.map((t) => (
-                                        <option key={t.ticketNo} value={t.ticketNo}>
-                                            №{t.ticketNo}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                            {(() => {
-                                const t =
-                                    tickets.find((x) => x.ticketNo === previewTicketNo) ||
-                                    tickets[0];
-                                return t ? (
-                                    <TicketBarcodeImage
-                                        value={t.code}
-                                        label={`Квиток №${t.ticketNo}`}
-                                    />
-                                ) : null;
-                            })()}
-                        </div>
-                    )}
-
-                    <div className="space-y-3">
-                        <div className="flex items-center justify-between gap-2">
-                            <h2 className="font-semibold">Сканер штрихкодів</h2>
+                <div
+                    className={`fixed inset-0 z-40 overflow-y-auto transition-colors duration-200 ${
+                        lastResult === 'ok'
+                            ? 'bg-green-500 text-white'
+                            : lastResult === 'reject'
+                              ? 'bg-red-600 text-white'
+                              : 'bg-base-100 text-base-content'
+                    }`}
+                >
+                    <div className="max-w-xl mx-auto p-6 space-y-6 min-h-full">
+                        <div className="flex flex-wrap gap-2">
                             <button
                                 type="button"
-                                className="btn btn-ghost btn-xs"
-                                onClick={() => setScannerOn((v) => !v)}
+                                className={`btn btn-sm ${lastResult ? 'btn-ghost text-inherit' : 'btn-ghost'}`}
+                                onClick={goHub}
                             >
-                                {scannerOn ? 'Вимкнути камеру' : 'Увімкнути камеру'}
+                                ← Меню
+                            </button>
+                            <button
+                                type="button"
+                                className={`btn btn-sm ${lastResult ? 'btn-ghost text-inherit' : 'btn-ghost'}`}
+                                onClick={openScanLogin}
+                            >
+                                Інший захід
                             </button>
                         </div>
-                        {scannerOn && (
-                            <BarcodeScanner
-                                onScan={(code) => void verifyCode(code)}
-                                paused={scanning}
-                            />
-                        )}
-                    </div>
 
-                    <form onSubmit={handleManualScan} className="space-y-3">
-                        <label className="text-sm opacity-70">Або код вручну</label>
-                        <input
-                            className="input input-bordered w-full font-mono"
-                            placeholder="Значення зі штрихкоду"
-                            value={manualCode}
-                            onChange={(e) => setManualCode(e.target.value)}
-                            disabled={scanning}
-                        />
-                        <button
-                            type="submit"
-                            className="btn btn-primary w-full"
-                            disabled={scanning}
-                        >
-                            {scanning ? 'Перевірка…' : 'Перевірити в БД'}
-                        </button>
-                    </form>
-
-                    {lastResult && (
                         <div
-                            className={`rounded-xl p-4 text-center font-semibold text-lg ${
-                                lastResult === 'ok'
-                                    ? 'bg-success/20 text-success'
-                                    : 'bg-error/20 text-error'
+                            className={`rounded-xl p-4 space-y-1 ${
+                                lastResult
+                                    ? 'bg-black/15 border border-white/20'
+                                    : 'border border-base-content/10'
                             }`}
                         >
-                            {lastMessage}
+                            {eventName && <div className="font-semibold">{eventName}</div>}
+                            <div className={`text-xs ${lastResult ? 'opacity-80' : 'opacity-60'}`}>
+                                Номер заходу
+                            </div>
+                            <div className="font-mono text-lg font-semibold">№{eventNo}</div>
                         </div>
-                    )}
 
-                    <div className="grid grid-cols-3 gap-3 text-center">
-                        <div className="rounded-xl border border-base-content/10 p-3">
-                            <div className="text-xl font-bold">{stats?.total ?? '—'}</div>
-                            <div className="text-xs opacity-60">Всього</div>
+                        {lastResult && (
+                            <div className="rounded-xl bg-black/20 p-6 text-center">
+                                <div className="text-3xl font-bold tracking-wide">
+                                    {lastResult === 'ok' ? 'ПРОХІД' : 'ВІДМОВА'}
+                                </div>
+                                <div className="mt-2 text-lg font-medium opacity-95">
+                                    {lastMessage}
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="space-y-3">
+                            <div className="flex items-center justify-between gap-2">
+                                <h2 className="font-semibold">Сканер</h2>
+                                <button
+                                    type="button"
+                                    className={`btn btn-xs ${lastResult ? 'btn-ghost text-inherit' : 'btn-ghost'}`}
+                                    onClick={() => setScannerOn((v) => !v)}
+                                >
+                                    {scannerOn ? 'Вимкнути камеру' : 'Увімкнути камеру'}
+                                </button>
+                            </div>
+                            {scannerOn && (
+                                <BarcodeScanner
+                                    onScan={(code) => void verifyCode(code)}
+                                    paused={scanning}
+                                />
+                            )}
                         </div>
-                        <div className="rounded-xl border border-base-content/10 p-3">
-                            <div className="text-xl font-bold">{stats?.used ?? '—'}</div>
-                            <div className="text-xs opacity-60">Пройшли</div>
-                        </div>
-                        <div className="rounded-xl border border-base-content/10 p-3">
-                            <div className="text-xl font-bold">{stats?.remaining ?? '—'}</div>
-                            <div className="text-xs opacity-60">Залишилось</div>
+
+                        <form onSubmit={handleManualScan} className="space-y-3">
+                            <label className={`text-sm ${lastResult ? 'opacity-80' : 'opacity-70'}`}>
+                                Або код вручну
+                            </label>
+                            <input
+                                className="input input-bordered w-full font-mono text-base-content"
+                                placeholder="Значення зі штрихкоду"
+                                value={manualCode}
+                                onChange={(e) => setManualCode(e.target.value)}
+                                disabled={scanning}
+                            />
+                            <button
+                                type="submit"
+                                className={`btn w-full ${lastResult ? 'btn-neutral' : 'btn-primary'}`}
+                                disabled={scanning}
+                            >
+                                {scanning ? 'Перевірка…' : 'Перевірити'}
+                            </button>
+                        </form>
+
+                        <div className="grid grid-cols-3 gap-3 text-center">
+                            <div
+                                className={`rounded-xl p-3 ${
+                                    lastResult ? 'bg-black/15' : 'border border-base-content/10'
+                                }`}
+                            >
+                                <div className="text-xl font-bold">{stats?.total ?? '—'}</div>
+                                <div className={`text-xs ${lastResult ? 'opacity-80' : 'opacity-60'}`}>
+                                    Всього
+                                </div>
+                            </div>
+                            <div
+                                className={`rounded-xl p-3 ${
+                                    lastResult ? 'bg-black/15' : 'border border-base-content/10'
+                                }`}
+                            >
+                                <div className="text-xl font-bold">{stats?.used ?? '—'}</div>
+                                <div className={`text-xs ${lastResult ? 'opacity-80' : 'opacity-60'}`}>
+                                    Пройшли
+                                </div>
+                            </div>
+                            <div
+                                className={`rounded-xl p-3 ${
+                                    lastResult ? 'bg-black/15' : 'border border-base-content/10'
+                                }`}
+                            >
+                                <div className="text-xl font-bold">{stats?.remaining ?? '—'}</div>
+                                <div className={`text-xs ${lastResult ? 'opacity-80' : 'opacity-60'}`}>
+                                    Залишилось
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
