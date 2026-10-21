@@ -1,23 +1,24 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { TixTicketCode } from '../../api/tix';
+import type { PdfBarcodeLayout, PdfBarcodeOrientation } from '../../utils/tixPdf';
 
 type Props = {
     onBack: () => void;
 };
 
-type PdfBarcodeLayout = {
-    xPercent: number;
-    yPercent: number;
-    widthPercent: number;
-    heightPercent: number;
-};
+type DragMode = 'move' | 'resize-se';
 
 const DEFAULT_LAYOUT: PdfBarcodeLayout = {
     xPercent: 25,
     yPercent: 70,
     widthPercent: 50,
     heightPercent: 12,
+    orientation: 'horizontal',
 };
+
+function clamp(n: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, n));
+}
 
 function readFileAsDataUrl(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -40,7 +41,7 @@ function filterByRange(
         .sort((a, b) => a.ticketNo - b.ticketNo);
 }
 
-/** PDF: усе вводиться тут — шаблон, JSON, позиція, діапазон. Без сесії. */
+/** PDF: усе вводиться тут — шаблон, JSON, позиція на картинці, орієнтація, діапазон. */
 export default function TicketPdfExport({ onBack }: Props) {
     const [templateUrl, setTemplateUrl] = useState('');
     const [jsonText, setJsonText] = useState('');
@@ -56,10 +57,59 @@ export default function TicketPdfExport({ onBack }: Props) {
     const [progress, setProgress] = useState('');
     const [error, setError] = useState('');
 
+    const previewRef = useRef<HTMLDivElement>(null);
+    const dragRef = useRef<{
+        mode: DragMode;
+        startX: number;
+        startY: number;
+        origin: PdfBarcodeLayout;
+    } | null>(null);
+
     const ranged = useMemo(
         () => filterByRange(tickets, fromNo, toNo),
         [tickets, fromNo, toNo],
     );
+
+    useEffect(() => {
+        const onMove = (e: PointerEvent) => {
+            const drag = dragRef.current;
+            if (!drag) return;
+            const el = previewRef.current;
+            if (!el) return;
+            const rect = el.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+
+            const dx = ((e.clientX - drag.startX) / rect.width) * 100;
+            const dy = ((e.clientY - drag.startY) / rect.height) * 100;
+            const o = drag.origin;
+
+            if (drag.mode === 'move') {
+                setLayout({
+                    ...o,
+                    xPercent: clamp(o.xPercent + dx, 0, 100 - o.widthPercent),
+                    yPercent: clamp(o.yPercent + dy, 0, 100 - o.heightPercent),
+                });
+                return;
+            }
+
+            setLayout({
+                ...o,
+                widthPercent: clamp(o.widthPercent + dx, 4, 100 - o.xPercent),
+                heightPercent: clamp(o.heightPercent + dy, 3, 100 - o.yPercent),
+            });
+        };
+        const onUp = () => {
+            dragRef.current = null;
+        };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onUp);
+        return () => {
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onUp);
+        };
+    }, []);
 
     const onTemplate = async (file: File | null) => {
         setError('');
@@ -126,10 +176,46 @@ export default function TicketPdfExport({ onBack }: Props) {
         }
     };
 
-    const setLayoutField = (key: keyof PdfBarcodeLayout, raw: string) => {
-        const value = Number(raw);
-        const v = Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : 0;
-        setLayout((prev) => ({ ...prev, [key]: v }));
+    const setOrientation = (orientation: PdfBarcodeOrientation) => {
+        setLayout((prev) => {
+            if (prev.orientation === orientation) return prev;
+            const widthPercent = prev.heightPercent;
+            const heightPercent = prev.widthPercent;
+            return {
+                ...prev,
+                orientation,
+                widthPercent,
+                heightPercent,
+                xPercent: clamp(prev.xPercent, 0, 100 - widthPercent),
+                yPercent: clamp(prev.yPercent, 0, 100 - heightPercent),
+            };
+        });
+    };
+
+    const onBoxPointerDown = (e: ReactPointerEvent<HTMLDivElement>, mode: DragMode) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragRef.current = {
+            mode,
+            startX: e.clientX,
+            startY: e.clientY,
+            origin: { ...layout },
+        };
+    };
+
+    const placeAtClick = (e: ReactPointerEvent<HTMLDivElement>) => {
+        if (dragRef.current) return;
+        const el = previewRef.current;
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const x = ((e.clientX - rect.left) / rect.width) * 100;
+        const y = ((e.clientY - rect.top) / rect.height) * 100;
+        setLayout((prev) => ({
+            ...prev,
+            xPercent: clamp(x - prev.widthPercent / 2, 0, 100 - prev.widthPercent),
+            yPercent: clamp(y - prev.heightPercent / 2, 0, 100 - prev.heightPercent),
+        }));
     };
 
     const generate = async () => {
@@ -179,7 +265,7 @@ export default function TicketPdfExport({ onBack }: Props) {
             </button>
             <h2 className="text-xl font-bold">PDF квитки</h2>
             <p className="text-sm opacity-70">
-                1) шаблон 2) JSON зі штрихкодами 3) позиція 4) діапазон → ZIP з окремими PDF
+                1) шаблон 2) JSON 3) позиція на картинці + орієнтація 4) діапазон → ZIP
             </p>
 
             <label className="form-control w-full">
@@ -193,19 +279,69 @@ export default function TicketPdfExport({ onBack }: Props) {
             </label>
 
             {templateUrl ? (
-                <div className="relative w-full overflow-hidden rounded-xl border border-base-content/15 bg-base-200">
-                    <img src={templateUrl} alt="Шаблон" className="w-full h-auto block" />
+                <div className="space-y-2">
+                    <span className="label-text text-sm opacity-70">
+                        3. Позиція на картинці — перетягни рамку, кут змінює розмір, клік по фону
+                        ставить центр
+                    </span>
                     <div
-                        className="absolute border-2 border-primary bg-primary/20 pointer-events-none"
-                        style={{
-                            left: `${layout.xPercent}%`,
-                            top: `${layout.yPercent}%`,
-                            width: `${layout.widthPercent}%`,
-                            height: `${layout.heightPercent}%`,
-                        }}
-                    />
+                        ref={previewRef}
+                        className="relative w-full select-none overflow-hidden rounded-xl border border-base-content/15 bg-base-200 touch-none"
+                        onPointerDown={placeAtClick}
+                    >
+                        <img
+                            src={templateUrl}
+                            alt="Шаблон"
+                            className="w-full h-auto block pointer-events-none"
+                            draggable={false}
+                        />
+                        <div
+                            className="absolute border-2 border-primary bg-primary/25 cursor-move"
+                            style={{
+                                left: `${layout.xPercent}%`,
+                                top: `${layout.yPercent}%`,
+                                width: `${layout.widthPercent}%`,
+                                height: `${layout.heightPercent}%`,
+                            }}
+                            onPointerDown={(e) => onBoxPointerDown(e, 'move')}
+                        >
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-primary-content bg-primary/80 px-1.5 py-0.5 rounded">
+                                    {layout.orientation === 'vertical' ? 'верт.' : 'гориз.'}
+                                </span>
+                            </div>
+                            <div
+                                className="absolute right-0 bottom-0 w-4 h-4 translate-x-1/2 translate-y-1/2 rounded-sm bg-primary border border-base-100 cursor-se-resize"
+                                onPointerDown={(e) => onBoxPointerDown(e, 'resize-se')}
+                            />
+                        </div>
+                    </div>
+                    <p className="text-xs opacity-60 font-mono">
+                        X {layout.xPercent.toFixed(1)}% · Y {layout.yPercent.toFixed(1)}% · W{' '}
+                        {layout.widthPercent.toFixed(1)}% · H {layout.heightPercent.toFixed(1)}%
+                    </p>
                 </div>
             ) : null}
+
+            <div className="space-y-2">
+                <span className="label-text text-sm opacity-70">Орієнтація штрихкоду</span>
+                <div className="grid grid-cols-2 gap-2">
+                    <button
+                        type="button"
+                        className={`btn btn-sm ${layout.orientation === 'horizontal' ? 'btn-primary' : 'btn-outline'}`}
+                        onClick={() => setOrientation('horizontal')}
+                    >
+                        Горизонтальна
+                    </button>
+                    <button
+                        type="button"
+                        className={`btn btn-sm ${layout.orientation === 'vertical' ? 'btn-primary' : 'btn-outline'}`}
+                        onClick={() => setOrientation('vertical')}
+                    >
+                        Вертикальна
+                    </button>
+                </div>
+            </div>
 
             <div className="space-y-2">
                 <span className="label-text text-sm opacity-70">2. JSON квитків</span>
@@ -239,30 +375,6 @@ export default function TicketPdfExport({ onBack }: Props) {
                         placeholder="з JSON або вручну"
                     />
                 </label>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-                {(
-                    [
-                        ['xPercent', '3. X %'],
-                        ['yPercent', 'Y %'],
-                        ['widthPercent', 'Ширина %'],
-                        ['heightPercent', 'Висота %'],
-                    ] as const
-                ).map(([key, label]) => (
-                    <label key={key} className="form-control w-full">
-                        <span className="label-text text-xs opacity-70">{label}</span>
-                        <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={0.5}
-                            className="input input-bordered input-sm w-full"
-                            value={layout[key]}
-                            onChange={(e) => setLayoutField(key, e.target.value)}
-                        />
-                    </label>
-                ))}
             </div>
 
             <div className="grid grid-cols-2 gap-3">

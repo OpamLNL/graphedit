@@ -1,5 +1,7 @@
 import type { TixTicketCode } from '../api/tix';
 
+export type PdfBarcodeOrientation = 'horizontal' | 'vertical';
+
 export type PdfBarcodeLayout = {
     /** % від ширини шаблону (лівий край) */
     xPercent: number;
@@ -9,6 +11,8 @@ export type PdfBarcodeLayout = {
     widthPercent: number;
     /** % від висоти шаблону */
     heightPercent: number;
+    /** Горизонтальний (звичайний) або вертикальний (повернутий на 90°) */
+    orientation: PdfBarcodeOrientation;
 };
 
 export type PdfTicketMeta = {
@@ -80,20 +84,36 @@ function barcodeDataUrl(
     code: string,
     widthPx: number,
     heightPx: number,
+    orientation: PdfBarcodeOrientation,
 ): string {
+    // Малюємо «довгий» штрихкод горизонтально, потім за потреби крутимо
+    const longSide = Math.max(80, Math.round(Math.max(widthPx, heightPx)));
+    const shortSide = Math.max(20, Math.round(Math.min(widthPx, heightPx)));
     const canvas = document.createElement('canvas');
-    const barH = Math.max(20, Math.round(heightPx));
-    const moduleW = Math.max(1, Math.min(4, Math.round(widthPx / 120)));
+    const moduleW = Math.max(1, Math.min(4, Math.round(longSide / 120)));
     JsBarcode(canvas, code, {
         format: 'CODE128',
         displayValue: false,
         margin: 8,
         width: moduleW,
-        height: barH,
+        height: shortSide,
         background: '#ffffff',
         lineColor: '#000000',
     });
-    return canvas.toDataURL('image/png');
+
+    if (orientation !== 'vertical') {
+        return canvas.toDataURL('image/png');
+    }
+
+    const rotated = document.createElement('canvas');
+    rotated.width = canvas.height;
+    rotated.height = canvas.width;
+    const ctx = rotated.getContext('2d');
+    if (!ctx) return canvas.toDataURL('image/png');
+    ctx.translate(rotated.width, 0);
+    ctx.rotate(Math.PI / 2);
+    ctx.drawImage(canvas, 0, 0);
+    return rotated.toDataURL('image/png');
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -134,8 +154,9 @@ export async function buildTicketPdf(
     const boxH = (heightMm * layout.heightPercent) / 100;
     const boxX = (widthMm * layout.xPercent) / 100;
     const boxY = (heightMm * layout.yPercent) / 100;
+    const orientation = layout.orientation === 'vertical' ? 'vertical' : 'horizontal';
 
-    const bc = barcodeDataUrl(JsBarcode, ticket.code, boxW * 8, boxH * 8);
+    const bc = barcodeDataUrl(JsBarcode, ticket.code, boxW * 8, boxH * 8, orientation);
     pdf.addImage(bc, 'PNG', boxX, boxY, boxW, boxH);
 
     const out = pdf.output('blob');
