@@ -147,49 +147,73 @@ export default function TicketPdfExport() {
         setProgress(`Завантажено: ${next.length} квитків`);
     };
 
-    const applyJson = () => {
+    const parseAndApplyJson = (text: string) => {
         setError('');
         setProgress('');
-        try {
-            const raw = JSON.parse(jsonText);
-            const list = Array.isArray(raw) ? raw : raw?.tickets;
-            if (!Array.isArray(list) || !list.length) {
-                throw new Error('Очікується { eventNo, name, tickets: [{ ticketNo, code }] }');
-            }
-            const next: TixTicketCode[] = list.map((item: unknown, idx: number) => {
-                if (item && typeof item === 'object') {
-                    const o = item as {
-                        ticketNo?: number;
-                        code?: string;
-                        barcode?: string;
-                    };
-                    const code = o.code || o.barcode;
-                    if (!code) throw new Error(`Немає code у квитку #${idx + 1}`);
-                    return {
-                        ticketNo: Number(o.ticketNo) || idx + 1,
-                        code: String(code),
-                    };
-                }
-                throw new Error(`Невірний елемент #${idx + 1}`);
-            });
-            let eventNo = metaNo.trim();
-            let name = metaName.trim();
-            if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-                const o = raw as {
-                    eventNo?: string | number;
-                    name?: string;
-                    eventName?: string;
+        const raw = JSON.parse(text);
+        const list = Array.isArray(raw) ? raw : raw?.tickets;
+        if (!Array.isArray(list) || !list.length) {
+            throw new Error('Очікується { eventNo, name, tickets: [{ ticketNo, code }] }');
+        }
+        const next: TixTicketCode[] = list.map((item: unknown, idx: number) => {
+            if (item && typeof item === 'object') {
+                const o = item as {
+                    ticketNo?: number;
+                    code?: string;
+                    barcode?: string;
                 };
-                if (o.eventNo != null && String(o.eventNo).trim()) {
-                    eventNo = String(o.eventNo).trim();
-                }
-                const n = o.name || o.eventName;
-                if (n) name = String(n);
+                const code = o.code || o.barcode;
+                if (!code) throw new Error(`Немає code у квитку #${idx + 1}`);
+                return {
+                    ticketNo: Number(o.ticketNo) || idx + 1,
+                    code: String(code),
+                };
             }
-            applyTicketList(next, { eventNo, name });
+            throw new Error(`Невірний елемент #${idx + 1}`);
+        });
+        let eventNo = metaNo.trim();
+        let name = metaName.trim();
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+            const o = raw as {
+                eventNo?: string | number;
+                name?: string;
+                eventName?: string;
+            };
+            if (o.eventNo != null && String(o.eventNo).trim()) {
+                eventNo = String(o.eventNo).trim();
+            }
+            const n = o.name || o.eventName;
+            if (n) name = String(n);
+        }
+        setJsonText(typeof raw === 'string' ? text : JSON.stringify(raw, null, 2));
+        applyTicketList(next, { eventNo, name });
+    };
+
+    const applyJson = () => {
+        try {
+            parseAndApplyJson(jsonText);
         } catch (err) {
             setTickets([]);
             setError(err instanceof Error ? err.message : 'Помилка JSON');
+        }
+    };
+
+    const onJsonFile = async (file: File | null) => {
+        setError('');
+        setProgress('');
+        if (!file) return;
+        const name = file.name.toLowerCase();
+        if (!name.endsWith('.json') && file.type && !file.type.includes('json') && file.type !== 'text/plain') {
+            setError('Обери файл .json');
+            return;
+        }
+        try {
+            const text = await file.text();
+            parseAndApplyJson(text);
+            setProgress(`Файл: ${file.name}`);
+        } catch (err) {
+            setTickets([]);
+            setError(err instanceof Error ? err.message : 'Не вдалося прочитати JSON-файл');
         }
     };
 
@@ -506,8 +530,24 @@ export default function TicketPdfExport() {
                 </button>
 
                 <label className="form-control w-full">
+                    <span className="label-text text-sm opacity-70">
+                        Обрати JSON-файл з компʼютера
+                    </span>
+                    <input
+                        type="file"
+                        accept=".json,application/json,text/plain"
+                        className="file-input file-input-bordered w-full"
+                        onChange={(e) => {
+                            const f = e.target.files?.[0] ?? null;
+                            void onJsonFile(f);
+                            e.target.value = '';
+                        }}
+                    />
+                </label>
+
+                <label className="form-control w-full">
                     <span className="label-text text-xs opacity-60">
-                        Або встав JSON вручну — застосуй і/або скачай файл
+                        Або встав JSON текстом
                     </span>
                     <textarea
                         className="textarea textarea-bordered w-full font-mono text-xs h-36"
@@ -521,7 +561,7 @@ export default function TicketPdfExport() {
                         Застосувати JSON
                     </button>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={downloadJson}>
-                        Скачати JSON
+                        Зберегти JSON на ПК
                     </button>
                 </div>
 
