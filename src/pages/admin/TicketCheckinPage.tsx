@@ -1,10 +1,33 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { ApiError } from '../../api/client';
-import { tixApi, type TixGeneratedCodes } from '../../api/tix';
+import {
+    tixApi,
+    type TixGeneratedCodes,
+    type TixStats,
+    type TixTicketCode,
+} from '../../api/tix';
+import BarcodeScanner from '../../components/tix/BarcodeScanner';
 
 type Screen = 'hub' | 'generate' | 'import' | 'checkin';
+
+const STORAGE_KEY = 'tix-checkin-state-v1';
+
+type PersistedState = {
+    screen: Screen;
+    eventNo: number;
+    eventDate: string;
+    eventSalt: string;
+    eventName: string;
+    ticketCount: number;
+    accessCode: string;
+    tickets: TixTicketCode[];
+    generatedJson: TixGeneratedCodes | null;
+    persistedInDb: boolean;
+    eventId?: number;
+    statusMsg: string;
+};
 
 function todayIso(): string {
     const d = new Date();
@@ -14,31 +37,108 @@ function todayIso(): string {
     return `${y}-${m}-${day}`;
 }
 
+function loadState(): Partial<PersistedState> | null {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw) as PersistedState;
+    } catch {
+        return null;
+    }
+}
+
 export default function TicketCheckinPage() {
     const { user, role } = useAuth();
     const navigate = useNavigate();
+    const saved = loadState();
 
-    const [screen, setScreen] = useState<Screen>('hub');
-    const [eventNo, setEventNo] = useState(1);
-    const [eventDate, setEventDate] = useState(todayIso());
-    const [eventSalt, setEventSalt] = useState('');
-    const [eventName, setEventName] = useState('');
-    const [ticketCount, setTicketCount] = useState(50);
+    const [screen, setScreen] = useState<Screen>(saved?.screen ?? 'hub');
+    const [eventNo, setEventNo] = useState(saved?.eventNo ?? 1);
+    const [eventDate, setEventDate] = useState(saved?.eventDate ?? todayIso());
+    const [eventSalt, setEventSalt] = useState(saved?.eventSalt ?? '');
+    const [eventName, setEventName] = useState(saved?.eventName ?? '');
+    const [ticketCount, setTicketCount] = useState(saved?.ticketCount ?? 50);
     const [importText, setImportText] = useState('');
-    const [accessCode, setAccessCode] = useState('');
-    const [tickets, setTickets] = useState<{ ticketNo: number; code: string }[]>([]);
-    const [generatedJson, setGeneratedJson] = useState<TixGeneratedCodes | null>(null);
-    const [statusMsg, setStatusMsg] = useState('');
+    const [accessCode, setAccessCode] = useState(saved?.accessCode ?? '');
+    const [tickets, setTickets] = useState<TixTicketCode[]>(saved?.tickets ?? []);
+    const [generatedJson, setGeneratedJson] = useState<TixGeneratedCodes | null>(
+        saved?.generatedJson ?? null,
+    );
+    const [persistedInDb, setPersistedInDb] = useState(saved?.persistedInDb ?? false);
+    const [eventId, setEventId] = useState<number | undefined>(saved?.eventId);
+    const [statusMsg, setStatusMsg] = useState(saved?.statusMsg ?? '');
     const [busy, setBusy] = useState(false);
+    const [hydrated, setHydrated] = useState(false);
 
     const [manualCode, setManualCode] = useState('');
     const [lastResult, setLastResult] = useState<'ok' | 'reject' | null>(null);
     const [lastMessage, setLastMessage] = useState('');
+    const [stats, setStats] = useState<TixStats | null>(null);
+    const [scannerOn, setScannerOn] = useState(true);
+    const [scanning, setScanning] = useState(false);
 
     useEffect(() => {
         if (!user) return navigate('/');
         if (role !== 'admin') return navigate('/');
     }, [user, role, navigate]);
+
+    useEffect(() => {
+        setHydrated(true);
+    }, []);
+
+    useEffect(() => {
+        if (!hydrated) return;
+        const payload: PersistedState = {
+            screen,
+            eventNo,
+            eventDate,
+            eventSalt,
+            eventName,
+            ticketCount,
+            accessCode,
+            tickets,
+            generatedJson,
+            persistedInDb,
+            eventId,
+            statusMsg,
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    }, [
+        hydrated,
+        screen,
+        eventNo,
+        eventDate,
+        eventSalt,
+        eventName,
+        ticketCount,
+        accessCode,
+        tickets,
+        generatedJson,
+        persistedInDb,
+        eventId,
+        statusMsg,
+    ]);
+
+    const clearSession = () => {
+        localStorage.removeItem(STORAGE_KEY);
+        setScreen('hub');
+        setEventNo(1);
+        setEventDate(todayIso());
+        setEventSalt('');
+        setEventName('');
+        setTicketCount(50);
+        setAccessCode('');
+        setTickets([]);
+        setGeneratedJson(null);
+        setPersistedInDb(false);
+        setEventId(undefined);
+        setStatusMsg('');
+        setLastResult(null);
+        setLastMessage('');
+        setImportText('');
+        setStats(null);
+        setScannerOn(true);
+    };
 
     const goHub = () => {
         setScreen('hub');
@@ -48,11 +148,6 @@ export default function TicketCheckinPage() {
     };
 
     const openGenerate = () => {
-        setEventNo(1);
-        setEventDate(todayIso());
-        setEventSalt('');
-        setEventName('');
-        setTicketCount(50);
         setStatusMsg('');
         setScreen('generate');
     };
@@ -79,13 +174,17 @@ export default function TicketCheckinPage() {
                 accessCode: salt,
                 ticketCount: Number(ticketCount),
                 name: eventName.trim() || undefined,
-                persist: true,
+                persist: false,
             });
             setGeneratedJson(result);
             setAccessCode(result.accessCode);
             setEventName(result.name);
             setTickets(result.tickets);
-            setStatusMsg(`Згенеровано ${result.tickets.length} кодів (${result.accessCode}).`);
+            setPersistedInDb(false);
+            setEventId(undefined);
+            setStatusMsg(
+                `Згенеровано ${result.tickets.length} кодів. Натисни «Забити у базу», щоб зберегти.`,
+            );
             setScreen('checkin');
         } catch (err) {
             const msg =
@@ -132,29 +231,86 @@ export default function TicketCheckinPage() {
                               '',
                       )
                     : '';
-            setAccessCode(codeFromJson);
-            setEventName(
+            if (!codeFromJson.trim()) {
+                throw new Error('У JSON потрібен accessCode (код заходу / сіль)');
+            }
+            const nameFromJson =
                 !Array.isArray(raw) && raw && typeof raw === 'object'
                     ? String(
                           (raw as { name?: string }).name ||
                               (raw as { eventName?: string }).eventName ||
                               '',
                       )
-                    : '',
-            );
+                    : '';
+            setAccessCode(codeFromJson);
+            setEventSalt(codeFromJson);
+            setEventName(nameFromJson);
+            if (!Array.isArray(raw) && raw && typeof raw === 'object') {
+                if ((raw as { eventNo?: number }).eventNo) {
+                    setEventNo(Number((raw as { eventNo: number }).eventNo));
+                }
+                if ((raw as { date?: string }).date) {
+                    setEventDate(String((raw as { date: string }).date));
+                }
+            }
             setTickets(parsed);
             setGeneratedJson({
-                eventNo: Number((raw as { eventNo?: number }).eventNo) || 0,
-                date: String((raw as { date?: string }).date || ''),
+                eventNo: Number((raw as { eventNo?: number }).eventNo) || eventNo,
+                date: String((raw as { date?: string }).date || eventDate),
                 accessCode: codeFromJson,
-                name: eventName,
+                name: nameFromJson,
                 persisted: false,
                 tickets: parsed,
             });
-            setStatusMsg(`Імпортовано ${parsed.length} кодів.`);
+            setPersistedInDb(false);
+            setEventId(undefined);
+            setStatusMsg(
+                `Завантажено ${parsed.length} кодів. Натисни «Забити у базу», щоб зберегти.`,
+            );
             setScreen('checkin');
         } catch (err) {
             setStatusMsg(err instanceof Error ? err.message : 'Помилка розбору JSON');
+        }
+    };
+
+    const handleSaveToDb = async () => {
+        if (!accessCode.trim() || !tickets.length) {
+            setStatusMsg('Немає кодів для збереження.');
+            return;
+        }
+        if (persistedInDb) {
+            setStatusMsg('Уже збережено в базі.');
+            return;
+        }
+        setBusy(true);
+        setStatusMsg('');
+        try {
+            const savedEvent = await tixApi.saveToDb({
+                name: eventName.trim() || undefined,
+                accessCode: accessCode.trim(),
+                tickets,
+            });
+            setPersistedInDb(true);
+            setEventId(savedEvent.id);
+            setGeneratedJson((prev) =>
+                prev
+                    ? { ...prev, persisted: true, eventId: savedEvent.id }
+                    : prev,
+            );
+            setStats(savedEvent.stats);
+            setStatusMsg(
+                `Збережено в БД: event #${savedEvent.id}, квитків ${savedEvent.stats.total}.`,
+            );
+        } catch (err) {
+            const msg =
+                err instanceof ApiError
+                    ? err.message
+                    : err instanceof Error
+                      ? err.message
+                      : 'Помилка збереження';
+            setStatusMsg(msg);
+        } finally {
+            setBusy(false);
         }
     };
 
@@ -163,6 +319,8 @@ export default function TicketCheckinPage() {
         const payload =
             generatedJson ??
             ({
+                eventNo,
+                date: eventDate,
                 accessCode,
                 name: eventName || undefined,
                 tickets: tickets.map((t) => ({ ticketNo: t.ticketNo, code: t.code })),
@@ -178,20 +336,72 @@ export default function TicketCheckinPage() {
         URL.revokeObjectURL(url);
     };
 
-    const handleScanStub = (e: React.FormEvent) => {
+    const verifyCode = useCallback(
+        async (code: string) => {
+            const barcode = code.trim();
+            const salt = accessCode.trim();
+            if (!barcode || !salt) {
+                setLastResult('reject');
+                setLastMessage('Немає коду заходу або штрихкоду');
+                return;
+            }
+            if (!persistedInDb) {
+                setLastResult('reject');
+                setLastMessage('Спочатку натисни «Забити у базу» — перевірка йде по БД');
+                return;
+            }
+            if (scanning) return;
+
+            setScanning(true);
+            setLastResult(null);
+            setLastMessage('Перевірка…');
+            try {
+                const result = await tixApi.scan({ accessCode: salt, barcode });
+                setStats(result.stats);
+                if (result.ok) {
+                    setLastResult('ok');
+                    setLastMessage(result.message);
+                } else {
+                    setLastResult('reject');
+                    setLastMessage(result.message);
+                }
+            } catch (err) {
+                setLastResult('reject');
+                setLastMessage(
+                    err instanceof ApiError
+                        ? err.message
+                        : err instanceof Error
+                          ? err.message
+                          : 'Помилка скану',
+                );
+            } finally {
+                setScanning(false);
+            }
+        },
+        [accessCode, persistedInDb, scanning],
+    );
+
+    const handleManualScan = (e: React.FormEvent) => {
         e.preventDefault();
         const code = manualCode.trim();
         if (!code) return;
-        const known = tickets.find((t) => t.code === code);
-        if (!known) {
-            setLastResult('reject');
-            setLastMessage('Код невідомий (немає в списку)');
-        } else {
-            setLastResult('ok');
-            setLastMessage(`Квиток №${known.ticketNo} — ок`);
-        }
         setManualCode('');
+        void verifyCode(code);
     };
+
+    useEffect(() => {
+        if (screen !== 'checkin' || !persistedInDb || !accessCode.trim()) return;
+        let cancelled = false;
+        tixApi
+            .getByCode(accessCode.trim())
+            .then((ev) => {
+                if (!cancelled) setStats(ev.stats);
+            })
+            .catch(() => undefined);
+        return () => {
+            cancelled = true;
+        };
+    }, [screen, persistedInDb, accessCode]);
 
     if (role !== 'admin') {
         return <div className="p-8 text-center opacity-60">Завантаження...</div>;
@@ -213,16 +423,29 @@ export default function TicketCheckinPage() {
                 <div className="space-y-4">
                     <div className="rounded-xl bg-primary/10 border border-primary/30 p-4">
                         <p className="text-sm font-medium">
-                            Крок 1: згенеруй або імпортуй штрихкоди. Сканер відкриється після
-                            цього.
+                            Крок 1: згенеруй або імпортуй штрихкоди. Потім «Забити у базу».
                         </p>
                     </div>
+                    {tickets.length > 0 && (
+                        <button
+                            type="button"
+                            className="btn btn-secondary w-full"
+                            onClick={() => setScreen('checkin')}
+                        >
+                            Продовжити поточну сесію ({tickets.length} квитків)
+                        </button>
+                    )}
                     <button type="button" className="btn btn-primary w-full" onClick={openGenerate}>
                         Згенерувати штрихкоди
                     </button>
                     <button type="button" className="btn btn-outline w-full" onClick={openImport}>
                         Імпорт з JSON
                     </button>
+                    {tickets.length > 0 && (
+                        <button type="button" className="btn btn-ghost btn-sm w-full" onClick={clearSession}>
+                            Очистити сесію
+                        </button>
+                    )}
                 </div>
             )}
 
@@ -232,8 +455,7 @@ export default function TicketCheckinPage() {
                         ← Назад
                     </button>
                     <p className="text-sm opacity-70">
-                        Код заходу = сіль (лише на сервері). У квитку — HMAC-хеш, сіль у коді не
-                        видно.
+                        Код заходу = сіль (лише на сервері). У квитку — HMAC-хеш.
                     </p>
                     <label className="form-control w-full">
                         <span className="label-text text-sm opacity-70">Назва (опційно)</span>
@@ -303,65 +525,115 @@ export default function TicketCheckinPage() {
                         ← Назад
                     </button>
                     <p className="text-sm opacity-70">
-                        Вставте JSON з полями{' '}
-                        <code className="text-xs">{`tickets: [{ ticketNo, code }]`}</code>
+                        Вставте JSON:{' '}
+                        <code className="text-xs">{`accessCode + tickets: [{ ticketNo, code }]`}</code>
                     </p>
                     <textarea
                         className="textarea textarea-bordered w-full font-mono text-xs h-48"
-                        placeholder='{"eventNo":12,"date":"2026-11-15","accessCode":"E12-20261115","tickets":[{"ticketNo":1,"code":"E12-20261115-0001"}]}'
+                        placeholder='{"accessCode":"YAS-x7k9m2","tickets":[{"ticketNo":1,"code":"a3f8…"}]}'
                         value={importText}
                         onChange={(e) => setImportText(e.target.value)}
                         required
                     />
                     {statusMsg && <p className="text-sm text-error">{statusMsg}</p>}
                     <button type="submit" className="btn btn-primary w-full">
-                        Імпортувати
+                        Завантажити в сесію
                     </button>
                 </form>
             )}
 
             {screen === 'checkin' && (
                 <div className="space-y-6">
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
-                        ← На початок
-                    </button>
-
-                    <div className="rounded-xl border border-base-content/10 p-4 space-y-1">
-                        {eventName && <div className="font-semibold">{eventName}</div>}
-                        <div className="text-xs opacity-60">Код заходу (accessCode)</div>
-                        <div className="font-mono text-lg font-semibold">{accessCode || '—'}</div>
-                        <div className="text-sm opacity-70">Квитків: {tickets.length}</div>
-                        <button
-                            type="button"
-                            className="btn btn-outline btn-sm mt-2"
-                            onClick={downloadJson}
-                        >
-                            Завантажити JSON
+                    <div className="flex flex-wrap gap-2">
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
+                            ← Меню
+                        </button>
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={clearSession}>
+                            Нова сесія
                         </button>
                     </div>
 
-                    {statusMsg && <p className="text-sm opacity-70">{statusMsg}</p>}
-
-                    <div className="rounded-xl border border-dashed border-base-content/20 p-8 text-center opacity-60">
-                        Тут буде камера / сканер QR
+                    <div className="rounded-xl border border-base-content/10 p-4 space-y-1">
+                        {eventName && <div className="font-semibold">{eventName}</div>}
+                        <div className="text-xs opacity-60">Код заходу (сіль / accessCode)</div>
+                        <div className="font-mono text-lg font-semibold">{accessCode || '—'}</div>
+                        <div className="text-sm opacity-70">Квитків: {tickets.length}</div>
+                        <div className="text-sm">
+                            БД:{' '}
+                            {persistedInDb ? (
+                                <span className="text-success font-medium">
+                                    збережено{eventId ? ` (#${eventId})` : ''}
+                                </span>
+                            ) : (
+                                <span className="text-warning font-medium">ще не в базі</span>
+                            )}
+                        </div>
+                        <div className="flex flex-wrap gap-2 mt-3">
+                            <button
+                                type="button"
+                                className="btn btn-primary btn-sm"
+                                onClick={handleSaveToDb}
+                                disabled={busy || persistedInDb || !tickets.length}
+                            >
+                                {busy ? 'Збереження…' : 'Забити у базу'}
+                            </button>
+                            <button
+                                type="button"
+                                className="btn btn-outline btn-sm"
+                                onClick={downloadJson}
+                            >
+                                Завантажити JSON
+                            </button>
+                        </div>
                     </div>
 
-                    <form onSubmit={handleScanStub} className="space-y-3">
+                    {statusMsg && <p className="text-sm opacity-80">{statusMsg}</p>}
+
+                    <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-2">
+                            <h2 className="font-semibold">Сканер</h2>
+                            <button
+                                type="button"
+                                className="btn btn-ghost btn-xs"
+                                onClick={() => setScannerOn((v) => !v)}
+                            >
+                                {scannerOn ? 'Вимкнути камеру' : 'Увімкнути камеру'}
+                            </button>
+                        </div>
+                        {!persistedInDb && (
+                            <p className="text-sm text-warning">
+                                Перевірка в БД недоступна, поки не натиснеш «Забити у базу».
+                            </p>
+                        )}
+                        {scannerOn && screen === 'checkin' && (
+                            <BarcodeScanner
+                                onScan={(code) => void verifyCode(code)}
+                                paused={scanning || !persistedInDb}
+                            />
+                        )}
+                    </div>
+
+                    <form onSubmit={handleManualScan} className="space-y-3">
                         <label className="text-sm opacity-70">Або введіть код вручну</label>
                         <input
                             className="input input-bordered w-full font-mono"
-                            placeholder="Штрихкод / QR"
+                            placeholder="Значення з QR / штрихкоду"
                             value={manualCode}
                             onChange={(e) => setManualCode(e.target.value)}
+                            disabled={scanning}
                         />
-                        <button type="submit" className="btn btn-primary w-full">
-                            Перевірити
+                        <button
+                            type="submit"
+                            className="btn btn-primary w-full"
+                            disabled={scanning || !persistedInDb}
+                        >
+                            {scanning ? 'Перевірка…' : 'Перевірити в БД'}
                         </button>
                     </form>
 
                     {lastResult && (
                         <div
-                            className={`rounded-xl p-4 text-center font-semibold ${
+                            className={`rounded-xl p-4 text-center font-semibold text-lg ${
                                 lastResult === 'ok'
                                     ? 'bg-success/20 text-success'
                                     : 'bg-error/20 text-error'
@@ -373,15 +645,17 @@ export default function TicketCheckinPage() {
 
                     <div className="grid grid-cols-3 gap-3 text-center">
                         <div className="rounded-xl border border-base-content/10 p-3">
-                            <div className="text-xl font-bold">{tickets.length || '—'}</div>
+                            <div className="text-xl font-bold">
+                                {stats?.total ?? (tickets.length || '—')}
+                            </div>
                             <div className="text-xs opacity-60">Всього</div>
                         </div>
                         <div className="rounded-xl border border-base-content/10 p-3">
-                            <div className="text-xl font-bold">—</div>
+                            <div className="text-xl font-bold">{stats?.used ?? '—'}</div>
                             <div className="text-xs opacity-60">Пройшли</div>
                         </div>
                         <div className="rounded-xl border border-base-content/10 p-3">
-                            <div className="text-xl font-bold">—</div>
+                            <div className="text-xl font-bold">{stats?.remaining ?? '—'}</div>
                             <div className="text-xs opacity-60">Залишилось</div>
                         </div>
                     </div>
