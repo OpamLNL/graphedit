@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { ApiError } from '../../api/client';
 import {
@@ -21,10 +21,10 @@ type Screen =
     | 'draw-login'
     | 'draw';
 
-const STORAGE_KEY = 'tix-checkin-state-v4';
+const STORAGE_KEY = 'tix-checkin-state-v5';
 
 type PersistedState = {
-    eventNo: number;
+    eventNo: string;
     eventDate: string;
     eventSalt: string;
     eventName: string;
@@ -35,8 +35,13 @@ type PersistedState = {
     persistedInDb: boolean;
     eventId?: number;
     statusMsg: string;
-    scanEventNo?: number;
+    scanEventNo?: string;
 };
+
+function asEventNoText(value: unknown): string {
+    if (value == null || value === '') return '';
+    return String(value);
+}
 
 function todayIso(): string {
     const d = new Date();
@@ -65,7 +70,7 @@ export default function TicketCheckinPage() {
 
     // Меню з трьома кнопками — завжди при відкритті сторінки
     const [screen, setScreen] = useState<Screen>('hub');
-    const [eventNo, setEventNo] = useState(saved?.eventNo ?? 1);
+    const [eventNo, setEventNo] = useState(() => asEventNoText(saved?.eventNo));
     const [eventDate, setEventDate] = useState(saved?.eventDate ?? todayIso());
     const [eventSalt, setEventSalt] = useState(saved?.eventSalt ?? '');
     const [eventName, setEventName] = useState(saved?.eventName ?? '');
@@ -88,14 +93,16 @@ export default function TicketCheckinPage() {
     const [stats, setStats] = useState<TixStats | null>(null);
     const [scannerOn, setScannerOn] = useState(true);
     const [scanning, setScanning] = useState(false);
+    /** Після результату скану — чекаємо кнопку ДАЛІ, камера не приймає нові коди */
+    const [awaitingNext, setAwaitingNext] = useState(false);
     const [previewTicketNo, setPreviewTicketNo] = useState(1);
-    const [scanEventNo, setScanEventNo] = useState<number>(
-        saved?.scanEventNo ?? saved?.eventNo ?? 1,
+    const [scanEventNo, setScanEventNo] = useState(() =>
+        asEventNoText(saved?.scanEventNo ?? saved?.eventNo),
     );
     /** false = новий захід; true = догенерувати квитки до існуючого */
     const [appendMode, setAppendMode] = useState(false);
 
-    const canVerifyInDb = persistedInDb && eventNo >= 1;
+    const canVerifyInDb = persistedInDb && eventNo.trim().length > 0;
 
     useEffect(() => {
         if (authLoading) return;
@@ -144,20 +151,11 @@ export default function TicketCheckinPage() {
         scanEventNo,
     ]);
 
-    // Після скану — короткий зелений/червоний фон, потім скидаємо
-    useEffect(() => {
-        if (!lastResult || screen !== 'scan') return;
-        const t = window.setTimeout(() => {
-            setLastResult(null);
-            setLastMessage('');
-        }, 2200);
-        return () => window.clearTimeout(t);
-    }, [lastResult, lastMessage, screen]);
-
     const clearSession = () => {
         localStorage.removeItem(STORAGE_KEY);
         setScreen('hub');
-        setEventNo(1);
+        setEventNo('');
+        setScanEventNo('');
         setEventDate(todayIso());
         setEventSalt('');
         setEventName('');
@@ -170,6 +168,7 @@ export default function TicketCheckinPage() {
         setStatusMsg('');
         setLastResult(null);
         setLastMessage('');
+        setAwaitingNext(false);
         setImportText('');
         setStats(null);
         setScannerOn(true);
@@ -180,6 +179,14 @@ export default function TicketCheckinPage() {
         setStatusMsg('');
         setLastResult(null);
         setLastMessage('');
+        setAwaitingNext(false);
+    };
+
+    const readyForNextScan = () => {
+        setLastResult(null);
+        setLastMessage('');
+        setAwaitingNext(false);
+        setManualCode('');
     };
 
     const openGenerate = () => {
@@ -193,12 +200,18 @@ export default function TicketCheckinPage() {
         setScreen('import');
     };
 
-    const loadEventByNo = async (no: number, nextScreen: 'scan' | 'draw') => {
+    const loadEventByNo = async (no: string, nextScreen: 'scan' | 'draw') => {
+        const code = no.trim();
+        if (!code) {
+            setStatusMsg('Введіть номер заходу');
+            return;
+        }
         setBusy(true);
         setStatusMsg('');
         try {
-            const ev = await tixApi.getByEventNo(no, true);
-            setEventNo(ev.eventNo ?? no);
+            const ev = await tixApi.getByEventNo(code, true);
+            setEventNo(ev.eventNo ?? code);
+            setScanEventNo(ev.eventNo ?? code);
             setEventName(ev.name);
             setEventId(ev.id);
             if (ev.eventDate) setEventDate(String(ev.eventDate).slice(0, 10));
@@ -228,43 +241,35 @@ export default function TicketCheckinPage() {
     };
 
     const openScanLogin = () => {
-        setScanEventNo(eventNo || 1);
+        setScanEventNo(eventNo);
         setStatusMsg('');
         setLastResult(null);
         setLastMessage('');
+        setAwaitingNext(false);
         setScreen('scan-login');
     };
 
     const openDrawLogin = () => {
-        setScanEventNo(eventNo || 1);
+        setScanEventNo(eventNo);
         setStatusMsg('');
         setScreen('draw-login');
     };
 
     const handleScanLogin = async (e: React.FormEvent) => {
         e.preventDefault();
-        const no = Number(scanEventNo);
-        if (!no || no < 1) {
-            setStatusMsg('Введіть номер заходу');
-            return;
-        }
-        await loadEventByNo(no, 'scan');
+        await loadEventByNo(scanEventNo, 'scan');
     };
 
     const handleDrawLogin = async (e: React.FormEvent) => {
         e.preventDefault();
-        const no = Number(scanEventNo);
-        if (!no || no < 1) {
-            setStatusMsg('Введіть номер заходу');
-            return;
-        }
-        await loadEventByNo(no, 'draw');
+        await loadEventByNo(scanEventNo, 'draw');
     };
 
     const handleGenerate = async (e: React.FormEvent) => {
         e.preventDefault();
         const salt = eventSalt.trim();
-        if (!eventNo || eventNo < 1 || !salt || !ticketCount) {
+        const no = eventNo.trim();
+        if (!no || !salt || !ticketCount) {
             setStatusMsg('Вкажіть номер заходу, сіль і кількість квитків.');
             return;
         }
@@ -274,14 +279,14 @@ export default function TicketCheckinPage() {
             setStatusMsg('');
             try {
                 const result = await tixApi.appendCodes({
-                    eventNo: Number(eventNo),
+                    eventNo: no,
                     accessCode: salt,
                     ticketCount: Number(ticketCount),
                 });
                 const list = result.tickets?.length
                     ? result.tickets
                     : result.appended;
-                setEventNo(Number(result.eventNo ?? eventNo));
+                setEventNo(String(result.eventNo ?? no));
                 if (result.date) setEventDate(String(result.date).slice(0, 10));
                 setEventName(result.name);
                 setAccessCode(salt);
@@ -294,7 +299,7 @@ export default function TicketCheckinPage() {
                 setEventId(result.eventId);
                 setStats(result.stats);
                 setGeneratedJson({
-                    eventNo: Number(result.eventNo ?? eventNo),
+                    eventNo: String(result.eventNo ?? no),
                     date: String(result.date).slice(0, 10),
                     accessCode: salt,
                     name: result.name,
@@ -305,7 +310,7 @@ export default function TicketCheckinPage() {
                 setStatusMsg(
                     `Додано квитки №${result.appendedFrom}–№${
                         result.appendedFrom + result.appendedCount - 1
-                    } до заходу №${result.eventNo}. Усього ${result.stats.total}.`,
+                    } до заходу «${result.eventNo}». Усього ${result.stats.total}.`,
                 );
                 setScreen('checkin');
             } catch (err) {
@@ -331,7 +336,7 @@ export default function TicketCheckinPage() {
         setStatusMsg('');
         try {
             const result = await tixApi.generateCodes({
-                eventNo: Number(eventNo),
+                eventNo: no,
                 date: eventDate,
                 accessCode: salt,
                 ticketCount: Number(ticketCount),
@@ -348,7 +353,7 @@ export default function TicketCheckinPage() {
             setEventId(result.eventId);
             setStatusMsg(
                 result.persisted
-                    ? `Захід №${result.eventNo}: збережено ${result.tickets.length} квитків (№1–№${result.tickets.length}).`
+                    ? `Захід «${result.eventNo}»: збережено ${result.tickets.length} квитків (№1–№${result.tickets.length}).`
                     : `Згенеровано ${result.tickets.length} кодів. Натисни «Забити у базу».`,
             );
             setScreen('checkin');
@@ -402,10 +407,10 @@ export default function TicketCheckinPage() {
             }
             const eventNoFromJson =
                 !Array.isArray(raw) && raw && typeof raw === 'object'
-                    ? Number((raw as { eventNo?: number }).eventNo)
-                    : NaN;
-            if (!Number.isInteger(eventNoFromJson) || eventNoFromJson < 1) {
-                throw new Error('У JSON потрібен eventNo (номер заходу ≥ 1)');
+                    ? asEventNoText((raw as { eventNo?: string | number }).eventNo).trim()
+                    : '';
+            if (!eventNoFromJson) {
+                throw new Error('У JSON потрібен eventNo (номер/код заходу)');
             }
             const dateFromJson =
                 !Array.isArray(raw) && raw && typeof raw === 'object'
@@ -452,7 +457,7 @@ export default function TicketCheckinPage() {
             setStatusMsg('Немає кодів для збереження.');
             return;
         }
-        if (!eventNo || eventNo < 1 || !eventDate) {
+        if (!eventNo.trim() || !eventDate) {
             setStatusMsg('Потрібні номер і дата заходу перед збереженням.');
             return;
         }
@@ -465,12 +470,12 @@ export default function TicketCheckinPage() {
         try {
             const savedEvent = await tixApi.saveToDb({
                 name: eventName.trim() || undefined,
-                eventNo: Number(eventNo),
+                eventNo: eventNo.trim(),
                 date: eventDate,
                 accessCode: accessCode.trim(),
                 tickets,
             });
-            if (savedEvent.eventNo) setEventNo(savedEvent.eventNo);
+            if (savedEvent.eventNo) setEventNo(String(savedEvent.eventNo));
             setPersistedInDb(true);
             setEventId(savedEvent.id);
             setGeneratedJson((prev) =>
@@ -520,24 +525,21 @@ export default function TicketCheckinPage() {
     const verifyCode = useCallback(
         async (code: string) => {
             const barcode = code.trim();
-            if (!barcode) {
-                setLastResult('reject');
-                setLastMessage('Порожній штрихкод');
-                return;
-            }
+            if (!barcode) return;
             if (!canVerifyInDb) {
                 setLastResult('reject');
                 setLastMessage('Немає активного заходу з БД');
+                setAwaitingNext(true);
                 return;
             }
-            if (scanning) return;
+            if (scanning || awaitingNext) return;
 
             setScanning(true);
             setLastResult(null);
             setLastMessage('Перевірка…');
             try {
                 const result = await tixApi.scan({
-                    eventNo: Number(eventNo),
+                    eventNo: eventNo.trim(),
                     barcode,
                 });
                 setStats(result.stats);
@@ -548,6 +550,7 @@ export default function TicketCheckinPage() {
                     setLastResult('reject');
                     setLastMessage(result.message);
                 }
+                setAwaitingNext(true);
             } catch (err) {
                 setLastResult('reject');
                 setLastMessage(
@@ -557,11 +560,12 @@ export default function TicketCheckinPage() {
                           ? err.message
                           : 'Помилка скану',
                 );
+                setAwaitingNext(true);
             } finally {
                 setScanning(false);
             }
         },
-        [eventNo, canVerifyInDb, scanning],
+        [eventNo, canVerifyInDb, scanning, awaitingNext],
     );
 
     const handleManualScan = (e: React.FormEvent) => {
@@ -576,7 +580,7 @@ export default function TicketCheckinPage() {
         if ((screen !== 'checkin' && screen !== 'scan') || !canVerifyInDb) return;
         let cancelled = false;
         tixApi
-            .getByEventNo(Number(eventNo), screen === 'scan')
+            .getByEventNo(eventNo.trim(), screen === 'scan')
             .then((ev) => {
                 if (cancelled) return;
                 setStats(ev.stats);
@@ -605,9 +609,11 @@ export default function TicketCheckinPage() {
                 <div>
                     <h1 className="text-2xl font-bold">Квитки / штрихкоди</h1>
                 </div>
-                <Link to="/admin/adminPage" className="btn btn-ghost btn-sm">
-                    ← Адмінка
-                </Link>
+                {screen !== 'hub' && (
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
+                        ← Меню штрихкодів
+                    </button>
+                )}
             </div>
 
             {screen === 'hub' && (
@@ -651,17 +657,17 @@ export default function TicketCheckinPage() {
             {screen === 'scan-login' && (
                 <form onSubmit={handleScanLogin} className="space-y-4">
                     <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
-                        ← Назад
+                        ← Меню штрихкодів
                     </button>
                     <h2 className="text-xl font-bold">Сканувати</h2>
                     <p className="text-sm opacity-70">Номер заходу (вже в базі)</p>
                     <input
-                        type="number"
-                        min={1}
+                        type="text"
+                        inputMode="text"
                         className="input input-bordered w-full font-mono"
-                        placeholder="Номер заходу"
+                        placeholder="Номер / код заходу"
                         value={scanEventNo}
-                        onChange={(e) => setScanEventNo(Number(e.target.value))}
+                        onChange={(e) => setScanEventNo(e.target.value)}
                         autoFocus
                         required
                     />
@@ -675,17 +681,17 @@ export default function TicketCheckinPage() {
             {screen === 'draw-login' && (
                 <form onSubmit={handleDrawLogin} className="space-y-4">
                     <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
-                        ← Назад
+                        ← Меню штрихкодів
                     </button>
                     <h2 className="text-xl font-bold">Намалювати штрихкод</h2>
                     <p className="text-sm opacity-70">Номер заходу (вже в базі)</p>
                     <input
-                        type="number"
-                        min={1}
+                        type="text"
+                        inputMode="text"
                         className="input input-bordered w-full font-mono"
-                        placeholder="Номер заходу"
+                        placeholder="Номер / код заходу"
                         value={scanEventNo}
-                        onChange={(e) => setScanEventNo(Number(e.target.value))}
+                        onChange={(e) => setScanEventNo(e.target.value)}
                         autoFocus
                         required
                     />
@@ -699,7 +705,7 @@ export default function TicketCheckinPage() {
             {screen === 'draw' && (
                 <div className="space-y-6">
                     <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
-                        ← Меню
+                        ← Меню штрихкодів
                     </button>
                     <div className="rounded-xl border border-base-content/10 p-4 space-y-1">
                         {eventName && <div className="font-semibold">{eventName}</div>}
@@ -759,7 +765,7 @@ export default function TicketCheckinPage() {
                                 className={`btn btn-sm ${lastResult ? 'btn-ghost text-inherit' : 'btn-ghost'}`}
                                 onClick={goHub}
                             >
-                                ← Меню
+                                ← Меню штрихкодів
                             </button>
                             <button
                                 type="button"
@@ -785,54 +791,63 @@ export default function TicketCheckinPage() {
                         </div>
 
                         {lastResult && (
-                            <div className="rounded-xl bg-black/20 p-6 text-center">
+                            <div className="rounded-xl bg-black/20 p-6 text-center space-y-4">
                                 <div className="text-3xl font-bold tracking-wide">
                                     {lastResult === 'ok' ? 'ПРОХІД' : 'ВІДМОВА'}
                                 </div>
-                                <div className="mt-2 text-lg font-medium opacity-95">
+                                <div className="text-lg font-medium opacity-95">
                                     {lastMessage}
                                 </div>
+                                <button
+                                    type="button"
+                                    className="btn btn-lg w-full h-20 text-2xl font-bold bg-white text-base-content border-0 hover:bg-white/90"
+                                    onClick={readyForNextScan}
+                                >
+                                    ДАЛІ
+                                </button>
                             </div>
                         )}
 
-                        <div className="space-y-3">
-                            <div className="flex items-center justify-between gap-2">
-                                <h2 className="font-semibold">Сканер</h2>
-                                <button
-                                    type="button"
-                                    className={`btn btn-xs ${lastResult ? 'btn-ghost text-inherit' : 'btn-ghost'}`}
-                                    onClick={() => setScannerOn((v) => !v)}
-                                >
-                                    {scannerOn ? 'Вимкнути камеру' : 'Увімкнути камеру'}
-                                </button>
+                        {!awaitingNext && (
+                            <div className="space-y-3">
+                                <div className="flex items-center justify-between gap-2">
+                                    <h2 className="font-semibold">Сканер</h2>
+                                    <button
+                                        type="button"
+                                        className="btn btn-ghost btn-xs"
+                                        onClick={() => setScannerOn((v) => !v)}
+                                    >
+                                        {scannerOn ? 'Вимкнути камеру' : 'Увімкнути камеру'}
+                                    </button>
+                                </div>
+                                {scannerOn && (
+                                    <BarcodeScanner
+                                        onScan={(code) => void verifyCode(code)}
+                                        paused={scanning || awaitingNext}
+                                    />
+                                )}
                             </div>
-                            {scannerOn && (
-                                <BarcodeScanner
-                                    onScan={(code) => void verifyCode(code)}
-                                    paused={scanning}
-                                />
-                            )}
-                        </div>
+                        )}
 
-                        <form onSubmit={handleManualScan} className="space-y-3">
-                            <label className={`text-sm ${lastResult ? 'opacity-80' : 'opacity-70'}`}>
-                                Або код вручну
-                            </label>
-                            <input
-                                className="input input-bordered w-full font-mono text-base-content"
-                                placeholder="Значення зі штрихкоду"
-                                value={manualCode}
-                                onChange={(e) => setManualCode(e.target.value)}
-                                disabled={scanning}
-                            />
-                            <button
-                                type="submit"
-                                className={`btn w-full ${lastResult ? 'btn-neutral' : 'btn-primary'}`}
-                                disabled={scanning}
-                            >
-                                {scanning ? 'Перевірка…' : 'Перевірити'}
-                            </button>
-                        </form>
+                        {!awaitingNext && (
+                            <form onSubmit={handleManualScan} className="space-y-3">
+                                <label className="text-sm opacity-70">Або код вручну</label>
+                                <input
+                                    className="input input-bordered w-full font-mono text-base-content"
+                                    placeholder="Значення зі штрихкоду"
+                                    value={manualCode}
+                                    onChange={(e) => setManualCode(e.target.value)}
+                                    disabled={scanning}
+                                />
+                                <button
+                                    type="submit"
+                                    className="btn btn-primary w-full"
+                                    disabled={scanning}
+                                >
+                                    {scanning ? 'Перевірка…' : 'Перевірити'}
+                                </button>
+                            </form>
+                        )}
 
                         <div className="grid grid-cols-3 gap-3 text-center">
                             <div
@@ -873,7 +888,7 @@ export default function TicketCheckinPage() {
             {screen === 'generate' && (
                 <form onSubmit={handleGenerate} className="space-y-4">
                     <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
-                        ← Назад
+                        ← Меню штрихкодів
                     </button>
                     <p className="text-sm opacity-70">
                         Код заходу = сіль (лише на сервері). У квитку — HMAC-хеш і номер
@@ -907,13 +922,14 @@ export default function TicketCheckinPage() {
                         </label>
                     )}
                     <label className="form-control w-full">
-                        <span className="label-text text-sm opacity-70">Номер заходу</span>
+                        <span className="label-text text-sm opacity-70">Номер / код заходу</span>
                         <input
-                            type="number"
-                            min={1}
+                            type="text"
+                            inputMode="text"
                             className="input input-bordered w-full font-mono"
+                            placeholder="напр. 12 або YAS-A"
                             value={eventNo}
-                            onChange={(e) => setEventNo(Number(e.target.value))}
+                            onChange={(e) => setEventNo(e.target.value)}
                             required
                         />
                     </label>
@@ -977,7 +993,7 @@ export default function TicketCheckinPage() {
             {screen === 'import' && (
                 <form onSubmit={handleImport} className="space-y-4">
                     <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
-                        ← Назад
+                        ← Меню штрихкодів
                     </button>
                     <p className="text-sm opacity-70">
                         Вставте JSON з{' '}
@@ -985,7 +1001,7 @@ export default function TicketCheckinPage() {
                     </p>
                     <textarea
                         className="textarea textarea-bordered w-full font-mono text-xs h-48"
-                        placeholder='{"eventNo":12,"date":"2026-11-15","accessCode":"YAS-x7k9m2","tickets":[{"ticketNo":1,"code":"a3f8…"}]}'
+                        placeholder='{"eventNo":"YAS-12","date":"2026-11-15","accessCode":"YAS-x7k9m2","tickets":[{"ticketNo":1,"code":"a3f8…"}]}'
                         value={importText}
                         onChange={(e) => setImportText(e.target.value)}
                         required
@@ -1001,7 +1017,7 @@ export default function TicketCheckinPage() {
                 <div className="space-y-6">
                     <div className="flex flex-wrap gap-2">
                         <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
-                            ← Меню
+                            ← Меню штрихкодів
                         </button>
                         <button type="button" className="btn btn-ghost btn-sm" onClick={clearSession}>
                             Нова сесія

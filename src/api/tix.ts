@@ -10,7 +10,7 @@ export type TixStats = {
 };
 
 export type TixGeneratedCodes = {
-    eventNo: number;
+    eventNo: string;
     date: string;
     accessCode: string;
     name: string;
@@ -20,7 +20,7 @@ export type TixGeneratedCodes = {
 };
 
 export type TixAppendedCodes = {
-    eventNo: number | null | undefined;
+    eventNo: string | null | undefined;
     date: string;
     name: string;
     eventId: number;
@@ -34,13 +34,14 @@ export type TixAppendedCodes = {
 export type TixEventSaved = {
     id: number;
     name: string;
-    eventNo?: number | null;
+    eventNo?: string | null;
     eventDate?: string | null;
     accessCode: string;
     status: string;
     stats: TixStats;
     tickets?: {
         id: number;
+        eventNo?: string;
         ticketNo: number;
         barcode: string;
         code?: string;
@@ -67,7 +68,7 @@ export type TixScanResult = {
 
 export const tixApi = {
     generateCodes: (body: {
-        eventNo: number;
+        eventNo: string;
         date: string;
         accessCode: string;
         ticketCount: number;
@@ -79,9 +80,8 @@ export const tixApi = {
             body: JSON.stringify(body),
         }),
 
-    /** Додати нові квитки до існуючого заходу (номери з продовженням) */
     appendCodes: (body: {
-        eventNo: number;
+        eventNo: string;
         accessCode: string;
         ticketCount: number;
     }) =>
@@ -90,10 +90,9 @@ export const tixApi = {
             body: JSON.stringify(body),
         }),
 
-    /** Забити захід + квитки в БД (обовʼязково eventNo + date) */
     saveToDb: (body: {
         name?: string;
-        eventNo: number;
+        eventNo: string;
         date: string;
         accessCode: string;
         tickets: { ticketNo: number; code: string }[];
@@ -112,7 +111,7 @@ export const tixApi = {
             }),
         }),
 
-    scan: (body: { eventNo: number; barcode: string }) =>
+    scan: (body: { eventNo: string; barcode: string }) =>
         apiFetch<TixScanResult>('/admin/tix/scan', {
             method: 'POST',
             body: JSON.stringify(body),
@@ -125,8 +124,10 @@ export const tixApi = {
             }`,
         ),
 
-    getByEventNo: (eventNo: number, withTickets = true) =>
+    getByEventNo: (eventNo: string, withTickets = true) =>
         apiFetch<TixEventSaved>(
-            `/admin/tix/events/by-no/${eventNo}${withTickets ? '?tickets=1' : ''}`,
+            `/admin/tix/events/by-no/${encodeURIComponent(eventNo)}${
+                withTickets ? '?tickets=1' : ''
+            }`,
         ),
 };
