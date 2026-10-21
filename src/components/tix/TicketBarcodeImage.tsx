@@ -24,7 +24,7 @@ export default function TicketBarcodeImage({ value, label }: Props) {
         if (!canvas || !code) return;
 
         try {
-            // Товстіші бари + тихі зони — інакше камера не читає довгі HMAC (24 hex)
+            // Товстіші бари + тихі зони — краще читається камерою
             JsBarcode(canvas, code, {
                 format: 'CODE128',
                 displayValue: true,

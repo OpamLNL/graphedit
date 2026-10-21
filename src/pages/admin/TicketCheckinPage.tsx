@@ -355,6 +355,14 @@ export default function TicketCheckinPage() {
             setGeneratedJson(null);
             setAccessCode('');
             setStatusMsg('');
+            if (nextScreen === 'scan') {
+                setLastResult(null);
+                setLastMessage('');
+                setAwaitingNext(false);
+                setScanning(false);
+                setScannerOn(true);
+                setManualCode('');
+            }
             setScreen(nextScreen);
         } catch (err) {
             setStatusMsg(

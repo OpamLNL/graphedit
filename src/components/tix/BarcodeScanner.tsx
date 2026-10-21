@@ -22,7 +22,7 @@ function getBarcodeDetector(): BarcodeDetectorCtor | null {
     return w.BarcodeDetector ?? null;
 }
 
-/** Сканер 1D (Code128): спочатку native BarcodeDetector, інакше html5-qrcode */
+/** Сканер 1D (Code128): html5-qrcode першим (надійніше), native — запасний */
 export default function BarcodeScanner({ onScan, paused }: Props) {
     const onScanRef = useRef(onScan);
     const pausedRef = useRef(!!paused);
@@ -56,6 +56,56 @@ export default function BarcodeScanner({ onScan, paused }: Props) {
         let raf = 0;
         let scanner: Html5Qrcode | null = null;
         const regionId = `tix-barcode-reader-${Math.random().toString(36).slice(2, 9)}`;
+
+        const startHtml5 = async () => {
+            const host = document.getElementById('tix-barcode-host');
+            if (!host) throw new Error('Немає контейнера сканера');
+
+            host.innerHTML = '';
+            const region = document.createElement('div');
+            region.id = regionId;
+            host.appendChild(region);
+
+            scanner = new Html5Qrcode(regionId, {
+                formatsToSupport: [
+                    Html5QrcodeSupportedFormats.CODE_128,
+                    Html5QrcodeSupportedFormats.CODE_39,
+                    Html5QrcodeSupportedFormats.EAN_13,
+                    Html5QrcodeSupportedFormats.EAN_8,
+                ],
+                verbose: false,
+                useBarCodeDetectorIfSupported: false,
+            });
+
+            const config: Html5QrcodeCameraScanConfig = {
+                fps: 15,
+                // Широке вікно — довгі Code128 інакше не читаються
+                qrbox: (viewW, viewH) => ({
+                    width: Math.floor(Math.min(viewW * 0.98, viewW - 4)),
+                    height: Math.floor(Math.min(viewH * 0.55, 280)),
+                }),
+                disableFlip: false,
+                aspectRatio: 1.777,
+                videoConstraints: {
+                    facingMode: { ideal: 'environment' },
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 },
+                } as MediaTrackConstraints,
+            };
+
+            await scanner.start(
+                { facingMode: 'environment' },
+                config,
+                (decoded) => emit(decoded),
+                () => undefined,
+            );
+            if (cancelled) {
+                await scanner.stop().catch(() => undefined);
+                return;
+            }
+            setEngine('html5');
+            setError('');
+        };
 
         const startNative = async (): Promise<boolean> => {
             const Ctor = getBarcodeDetector();
@@ -117,71 +167,27 @@ export default function BarcodeScanner({ onScan, paused }: Props) {
             return true;
         };
 
-        const startHtml5 = async () => {
-            const host = document.getElementById('tix-barcode-host');
-            if (!host) throw new Error('Немає контейнера сканера');
-
-            host.innerHTML = '';
-            const region = document.createElement('div');
-            region.id = regionId;
-            host.appendChild(region);
-
-            scanner = new Html5Qrcode(regionId, {
-                formatsToSupport: [
-                    Html5QrcodeSupportedFormats.CODE_128,
-                    Html5QrcodeSupportedFormats.CODE_39,
-                    Html5QrcodeSupportedFormats.EAN_13,
-                    Html5QrcodeSupportedFormats.EAN_8,
-                ],
-                verbose: false,
-                useBarCodeDetectorIfSupported: true,
-            });
-
-            const config: Html5QrcodeCameraScanConfig = {
-                fps: 15,
-                // Широке вікно — довгі Code128 інакше не читаються
-                qrbox: (viewW, viewH) => ({
-                    width: Math.floor(Math.min(viewW * 0.95, viewW - 8)),
-                    height: Math.floor(Math.min(viewH * 0.45, 220)),
-                }),
-                disableFlip: false,
-                videoConstraints: {
-                    facingMode: { ideal: 'environment' },
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 },
-                } as MediaTrackConstraints,
-            };
-
-            await scanner.start(
-                { facingMode: 'environment' },
-                config,
-                (decoded) => emit(decoded),
-                () => undefined,
-            );
-            if (cancelled) {
-                await scanner.stop().catch(() => undefined);
-                return;
-            }
-            setEngine('html5');
-            setError('');
-        };
-
         const start = async () => {
             setError('');
+            // Спочатку html5 — Code128 з HMAC часто «мовчить» на native BarcodeDetector
             try {
+                await startHtml5();
+                if (!cancelled) return;
+            } catch {
+                /* fallback native */
+            }
+            if (cancelled) return;
+            try {
+                if (scanner?.isScanning) {
+                    await scanner.stop().catch(() => undefined);
+                    scanner = null;
+                }
+                const host = document.getElementById('tix-barcode-host');
+                if (host) host.innerHTML = '';
                 const ok = await startNative();
                 if (ok || cancelled) return;
-                await startHtml5();
+                throw new Error('Камера недоступна');
             } catch (err) {
-                // fallback якщо environment camera відсутня
-                try {
-                    if (!scanner) {
-                        await startHtml5();
-                        return;
-                    }
-                } catch {
-                    /* fall through */
-                }
                 setEngine('');
                 setError(
                     err instanceof Error
@@ -210,7 +216,6 @@ export default function BarcodeScanner({ onScan, paused }: Props) {
     return (
         <div className="space-y-2">
             <div className="relative overflow-hidden rounded-xl border border-base-content/15 bg-base-200 min-h-[240px]">
-                {/* native engine */}
                 <video
                     ref={videoRef}
                     className={engine === 'native' ? 'w-full h-auto min-h-[240px] object-cover' : 'hidden'}
@@ -218,7 +223,6 @@ export default function BarcodeScanner({ onScan, paused }: Props) {
                     playsInline
                     autoPlay
                 />
-                {/* html5-qrcode host */}
                 <div
                     id="tix-barcode-host"
                     className={engine === 'html5' || !engine ? 'w-full min-h-[240px]' : 'hidden'}
