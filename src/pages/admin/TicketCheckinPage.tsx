@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { ApiError } from '../../api/client';
 import {
@@ -25,6 +25,8 @@ type Screen =
     | 'pdf';
 
 const STORAGE_KEY = 'tix-checkin-state-v5';
+/** Маркер у history: щоб «назад» з підменю не викидало на /admin/adminPage */
+const TIX_HIST_KEY = 'tixInner';
 
 type PersistedState = {
     eventNo: string;
@@ -121,6 +123,19 @@ export default function TicketCheckinPage() {
         setHydrated(true);
     }, []);
 
+    /** Браузерне «назад» з PDF/скану тощо → меню штрихкодів, не адмінка */
+    useEffect(() => {
+        const onPopState = () => {
+            setScreen('hub');
+            setStatusMsg('');
+            setLastResult(null);
+            setLastMessage('');
+            setAwaitingNext(false);
+        };
+        window.addEventListener('popstate', onPopState);
+        return () => window.removeEventListener('popstate', onPopState);
+    }, []);
+
     useEffect(() => {
         if (!hydrated) return;
         const payload: PersistedState = {
@@ -154,9 +169,33 @@ export default function TicketCheckinPage() {
         scanEventNo,
     ]);
 
+    /** З хаба в підменю — додаємо history entry, щоб Back лишав на цій сторінці */
+    const leaveHub = (next: Screen) => {
+        if (next === 'hub') {
+            setScreen('hub');
+            return;
+        }
+        if (screen === 'hub') {
+            window.history.pushState({ [TIX_HIST_KEY]: next }, '');
+        }
+        setScreen(next);
+    };
+
+    const goHub = () => {
+        setStatusMsg('');
+        setLastResult(null);
+        setLastMessage('');
+        setAwaitingNext(false);
+        const st = window.history.state as Record<string, unknown> | null;
+        if (st && st[TIX_HIST_KEY]) {
+            window.history.back();
+            return;
+        }
+        setScreen('hub');
+    };
+
     const clearSession = () => {
         localStorage.removeItem(STORAGE_KEY);
-        setScreen('hub');
         setEventNo('');
         setScanEventNo('');
         setEventDate(todayIso());
@@ -175,14 +214,10 @@ export default function TicketCheckinPage() {
         setImportText('');
         setStats(null);
         setScannerOn(true);
-    };
-
-    const goHub = () => {
         setScreen('hub');
-        setStatusMsg('');
-        setLastResult(null);
-        setLastMessage('');
-        setAwaitingNext(false);
+        if ((window.history.state as Record<string, unknown> | null)?.[TIX_HIST_KEY]) {
+            window.history.replaceState(null, '');
+        }
     };
 
     const readyForNextScan = () => {
@@ -194,13 +229,13 @@ export default function TicketCheckinPage() {
 
     const openGenerate = () => {
         setStatusMsg('');
-        setScreen('generate');
+        leaveHub('generate');
     };
 
     const openImport = () => {
         setImportText('');
         setStatusMsg('');
-        setScreen('import');
+        leaveHub('import');
     };
 
     const loadEventByNo = async (no: string, nextScreen: 'scan' | 'draw') => {
@@ -249,13 +284,13 @@ export default function TicketCheckinPage() {
         setLastResult(null);
         setLastMessage('');
         setAwaitingNext(false);
-        setScreen('scan-login');
+        leaveHub('scan-login');
     };
 
     const openDrawLogin = () => {
         setScanEventNo(eventNo);
         setStatusMsg('');
-        setScreen('draw-login');
+        leaveHub('draw-login');
     };
 
     const handleScanLogin = async (e: React.FormEvent) => {
@@ -612,7 +647,11 @@ export default function TicketCheckinPage() {
                 <div>
                     <h1 className="text-2xl font-bold">Квитки / штрихкоди</h1>
                 </div>
-                {screen !== 'hub' && (
+                {screen === 'hub' ? (
+                    <Link to="/admin/adminPage" className="btn btn-ghost btn-sm">
+                        ← Адмінка
+                    </Link>
+                ) : (
                     <button type="button" className="btn btn-ghost btn-sm" onClick={goHub}>
                         ← Меню штрихкодів
                     </button>
@@ -647,7 +686,7 @@ export default function TicketCheckinPage() {
                         className="btn btn-lg w-full h-16 text-lg"
                         onClick={() => {
                             setStatusMsg('');
-                            setScreen('pdf');
+                            leaveHub('pdf');
                         }}
                     >
                         PDF КВИТКИ
@@ -659,7 +698,7 @@ export default function TicketCheckinPage() {
                         <button
                             type="button"
                             className="btn btn-ghost btn-sm w-full"
-                            onClick={() => setScreen('checkin')}
+                            onClick={() => leaveHub('checkin')}
                         >
                             Сесія генерації ({tickets.length})
                         </button>
@@ -673,7 +712,7 @@ export default function TicketCheckinPage() {
                         <div className="p-8 text-center opacity-60">Завантаження PDF…</div>
                     }
                 >
-                    <TicketPdfExport onBack={goHub} />
+                    <TicketPdfExport />
                 </Suspense>
             )}
 

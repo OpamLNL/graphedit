@@ -2,10 +2,6 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { tixApi, type TixTicketCode } from '../../api/tix';
 import type { PdfBarcodeLayout, PdfBarcodeOrientation } from '../../utils/tixPdf';
 
-type Props = {
-    onBack: () => void;
-};
-
 type DragMode = 'move' | 'resize-se';
 
 const DEFAULT_LAYOUT: PdfBarcodeLayout = {
@@ -42,7 +38,7 @@ function filterByRange(
 }
 
 /** PDF: усе вводиться тут — шаблон, JSON, позиція на картинці, орієнтація, діапазон. */
-export default function TicketPdfExport({ onBack }: Props) {
+export default function TicketPdfExport() {
     const [templateUrl, setTemplateUrl] = useState('');
     const [jsonText, setJsonText] = useState('');
     const [tickets, setTickets] = useState<TixTicketCode[]>([]);
@@ -345,9 +341,6 @@ export default function TicketPdfExport({ onBack }: Props) {
 
     return (
         <div className="space-y-5">
-            <button type="button" className="btn btn-ghost btn-sm" onClick={onBack}>
-                ← Меню штрихкодів
-            </button>
             <h2 className="text-xl font-bold">PDF квитки</h2>
             <p className="text-sm opacity-70">
                 1) шаблон 2) квитки з бази або JSON 3) позиція + орієнтація → ZIP
