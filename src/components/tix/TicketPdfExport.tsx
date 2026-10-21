@@ -520,12 +520,7 @@ export default function TicketPdfExport() {
                     <button type="button" className="btn btn-outline btn-sm" onClick={applyJson}>
                         Застосувати JSON
                     </button>
-                    <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        disabled={!jsonText.trim() && !tickets.length}
-                        onClick={downloadJson}
-                    >
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={downloadJson}>
                         Скачати JSON
                     </button>
                 </div>
