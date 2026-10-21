@@ -82,18 +82,23 @@ async function getJSZip(): Promise<new () => {
 function barcodeDataUrl(
     JsBarcode: (canvas: HTMLCanvasElement, code: string, opts: object) => void,
     code: string,
+    ticketNo: number,
     widthPx: number,
     heightPx: number,
     orientation: PdfBarcodeOrientation,
 ): string {
-    // Малюємо «довгий» штрихкод горизонтально, потім за потреби крутимо
+    // Малюємо «довгий» штрихкод горизонтально (+ номер квитка), потім за потреби крутимо
     const longSide = Math.max(80, Math.round(Math.max(widthPx, heightPx)));
-    const shortSide = Math.max(20, Math.round(Math.min(widthPx, heightPx)));
+    const shortSide = Math.max(24, Math.round(Math.min(widthPx, heightPx) * 0.72));
     const canvas = document.createElement('canvas');
     const moduleW = Math.max(1, Math.min(4, Math.round(longSide / 120)));
+    const fontSize = Math.max(12, Math.min(28, Math.round(shortSide * 0.35)));
     JsBarcode(canvas, code, {
         format: 'CODE128',
-        displayValue: false,
+        displayValue: true,
+        text: String(ticketNo),
+        fontSize,
+        textMargin: 4,
         margin: 8,
         width: moduleW,
         height: shortSide,
@@ -156,7 +161,14 @@ export async function buildTicketPdf(
     const boxY = (heightMm * layout.yPercent) / 100;
     const orientation = layout.orientation === 'vertical' ? 'vertical' : 'horizontal';
 
-    const bc = barcodeDataUrl(JsBarcode, ticket.code, boxW * 8, boxH * 8, orientation);
+    const bc = barcodeDataUrl(
+        JsBarcode,
+        ticket.code,
+        ticket.ticketNo,
+        boxW * 8,
+        boxH * 8,
+        orientation,
+    );
     pdf.addImage(bc, 'PNG', boxX, boxY, boxW, boxH);
 
     const out = pdf.output('blob');
