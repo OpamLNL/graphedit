@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { ApiError } from '../../api/client';
@@ -10,7 +10,8 @@ import {
 } from '../../api/tix';
 import BarcodeScanner from '../../components/tix/BarcodeScanner';
 import TicketBarcodeImage from '../../components/tix/TicketBarcodeImage';
-import TicketPdfExport from '../../components/tix/TicketPdfExport';
+
+const TicketPdfExport = lazy(() => import('../../components/tix/TicketPdfExport'));
 
 type Screen =
     | 'hub'
@@ -667,13 +668,19 @@ export default function TicketCheckinPage() {
             )}
 
             {screen === 'pdf' && (
-                <TicketPdfExport
-                    eventNo={eventNo}
-                    eventName={eventName}
-                    eventDate={eventDate}
-                    tickets={tickets}
-                    onBack={goHub}
-                />
+                <Suspense
+                    fallback={
+                        <div className="p-8 text-center opacity-60">Завантаження PDF…</div>
+                    }
+                >
+                    <TicketPdfExport
+                        eventNo={eventNo}
+                        eventName={eventName}
+                        eventDate={eventDate}
+                        tickets={tickets}
+                        onBack={goHub}
+                    />
+                </Suspense>
             )}
 
             {screen === 'scan-login' && (

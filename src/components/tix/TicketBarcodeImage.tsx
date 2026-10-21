@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import JsBarcode from 'jsbarcode';
+import JsBarcodeImport from 'jsbarcode';
+
+const JsBarcode =
+    (JsBarcodeImport as unknown as { default?: typeof JsBarcodeImport }).default ??
+    JsBarcodeImport;
 
 type Props = {
     value: string;

@@ -1,6 +1,3 @@
-import { jsPDF } from 'jspdf';
-import JsBarcode from 'jsbarcode';
-import JSZip from 'jszip';
 import type { TixTicketCode } from '../api/tix';
 
 export type PdfBarcodeLayout = {
@@ -21,11 +18,13 @@ export type PdfTicketMeta = {
 };
 
 function sanitizeFilePart(value: string): string {
-    return value
-        .trim()
-        .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, '_')
-        .replace(/\s+/g, '_')
-        .slice(0, 80) || 'ticket';
+    return (
+        value
+            .trim()
+            .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, '_')
+            .replace(/\s+/g, '_')
+            .slice(0, 80) || 'ticket'
+    );
 }
 
 export function ticketPdfFileName(meta: PdfTicketMeta, ticketNo: number): string {
@@ -34,14 +33,63 @@ export function ticketPdfFileName(meta: PdfTicketMeta, ticketNo: number): string
     return `${no}_${name}_${ticketNo}.pdf`;
 }
 
-function barcodeDataUrl(code: string, widthPx: number, heightPx: number): string {
+async function getJsBarcode(): Promise<(canvas: HTMLCanvasElement, code: string, opts: object) => void> {
+    const mod = await import('jsbarcode');
+    const fn = (mod as { default?: unknown }).default ?? mod;
+    if (typeof fn !== 'function') {
+        throw new Error('jsbarcode не завантажився');
+    }
+    return fn as (canvas: HTMLCanvasElement, code: string, opts: object) => void;
+}
+
+async function getJsPdfCtor(): Promise<new (opts: object) => {
+    addImage: (...args: unknown[]) => void;
+    output: (type: string) => Blob;
+}> {
+    const mod = await import('jspdf');
+    const ctor =
+        (mod as { jsPDF?: unknown }).jsPDF ??
+        (mod as { default?: { jsPDF?: unknown } }).default?.jsPDF ??
+        (mod as { default?: unknown }).default;
+    if (typeof ctor !== 'function') {
+        throw new Error('jspdf не завантажився');
+    }
+    return ctor as new (opts: object) => {
+        addImage: (...args: unknown[]) => void;
+        output: (type: string) => Blob;
+    };
+}
+
+async function getJSZip(): Promise<new () => {
+    file: (name: string, data: Blob) => void;
+    generateAsync: (opts: { type: string }) => Promise<Blob>;
+}> {
+    const mod = await import('jszip');
+    const ctor = (mod as { default?: unknown }).default ?? mod;
+    if (typeof ctor !== 'function') {
+        throw new Error('jszip не завантажився');
+    }
+    return ctor as new () => {
+        file: (name: string, data: Blob) => void;
+        generateAsync: (opts: { type: string }) => Promise<Blob>;
+    };
+}
+
+function barcodeDataUrl(
+    JsBarcode: (canvas: HTMLCanvasElement, code: string, opts: object) => void,
+    code: string,
+    widthPx: number,
+    heightPx: number,
+): string {
     const canvas = document.createElement('canvas');
+    const barH = Math.max(20, Math.round(heightPx));
+    const moduleW = Math.max(1, Math.min(4, Math.round(widthPx / 120)));
     JsBarcode(canvas, code, {
         format: 'CODE128',
         displayValue: false,
-        margin: 0,
-        width: Math.max(1, Math.round(widthPx / Math.max(code.length * 11, 80))),
-        height: Math.max(20, Math.round(heightPx)),
+        margin: 8,
+        width: moduleW,
+        height: barH,
         background: '#ffffff',
         lineColor: '#000000',
     });
@@ -63,29 +111,38 @@ export async function buildTicketPdf(
     ticket: TixTicketCode,
     layout: PdfBarcodeLayout,
 ): Promise<Blob> {
+    const [JsPDF, JsBarcode] = await Promise.all([getJsPdfCtor(), getJsBarcode()]);
     const img = await loadImage(templateDataUrl);
-    const pageW = img.naturalWidth || img.width;
-    const pageH = img.naturalHeight || img.height;
-    if (!pageW || !pageH) throw new Error('Порожній шаблон');
+    const pageWpx = img.naturalWidth || img.width;
+    const pageHpx = img.naturalHeight || img.height;
+    if (!pageWpx || !pageHpx) throw new Error('Порожній шаблон');
 
-    const pdf = new jsPDF({
-        orientation: pageW >= pageH ? 'landscape' : 'portrait',
-        unit: 'px',
-        format: [pageW, pageH],
-        hotfixes: ['px_scaling'],
+    // mm — стабільніше за px у різних збірках jspdf
+    const widthMm = 210;
+    const heightMm = (pageHpx / pageWpx) * widthMm;
+
+    const pdf = new JsPDF({
+        orientation: widthMm >= heightMm ? 'landscape' : 'portrait',
+        unit: 'mm',
+        format: [widthMm, heightMm],
     });
 
-    pdf.addImage(templateDataUrl, 'PNG', 0, 0, pageW, pageH);
+    const fmt = templateDataUrl.startsWith('data:image/jpeg') ? 'JPEG' : 'PNG';
+    pdf.addImage(templateDataUrl, fmt, 0, 0, widthMm, heightMm);
 
-    const boxW = (pageW * layout.widthPercent) / 100;
-    const boxH = (pageH * layout.heightPercent) / 100;
-    const boxX = (pageW * layout.xPercent) / 100;
-    const boxY = (pageH * layout.yPercent) / 100;
+    const boxW = (widthMm * layout.widthPercent) / 100;
+    const boxH = (heightMm * layout.heightPercent) / 100;
+    const boxX = (widthMm * layout.xPercent) / 100;
+    const boxY = (heightMm * layout.yPercent) / 100;
 
-    const bc = barcodeDataUrl(ticket.code, boxW * 2, boxH * 2);
+    const bc = barcodeDataUrl(JsBarcode, ticket.code, boxW * 8, boxH * 8);
     pdf.addImage(bc, 'PNG', boxX, boxY, boxW, boxH);
 
-    return pdf.output('blob');
+    const out = pdf.output('blob');
+    if (!(out instanceof Blob)) {
+        throw new Error('jspdf.output не повернув Blob');
+    }
+    return out;
 }
 
 export function filterTicketsByRange(
@@ -109,6 +166,7 @@ export async function buildTicketsZip(
     onProgress?: (done: number, total: number) => void,
 ): Promise<Blob> {
     if (!tickets.length) throw new Error('Немає квитків у діапазоні');
+    const JSZip = await getJSZip();
     const zip = new JSZip();
     let done = 0;
     for (const ticket of tickets) {
