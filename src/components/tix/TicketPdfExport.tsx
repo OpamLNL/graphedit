@@ -394,14 +394,11 @@ export default function TicketPdfExport() {
             );
             setProgress(`Завантаження файлів (${files.length})…`);
             await downloadBlobs(files);
-            const kind = combinedPdf ? 'загальний PDF' : 'окремі PDF';
-            const pack =
-                files.length === 1
-                    ? files[0].fileName.endsWith('.pdf')
-                        ? '1 файл'
-                        : '1 ZIP'
-                    : `${files.length} ZIP`;
-            setProgress(`Готово: ${ranged.length} квитків (${kind}), ${pack}`);
+            const zipCount = files.filter((f) => f.fileName.endsWith('.zip')).length;
+            const extra = combinedPdf ? ' + 1 загальний PDF' : '';
+            setProgress(
+                `Готово: ${ranged.length} окремих PDF у ${zipCount} ZIP${extra}`,
+            );
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Помилка генерації PDF');
         } finally {
@@ -600,7 +597,7 @@ export default function TicketPdfExport() {
                         onChange={(e) => setCombinedPdf(e.target.checked)}
                     />
                     <span className="label-text text-sm">
-                        Один загальний PDF (усі квитки сторінками)
+                        Додатково скачати один загальний PDF (усі квитки сторінками)
                     </span>
                 </label>
                 <label className="label cursor-pointer justify-start gap-3 py-1">
@@ -634,13 +631,9 @@ export default function TicketPdfExport() {
                     </label>
                 ) : null}
                 <p className="text-xs opacity-60">
-                    {combinedPdf
-                        ? splitArchives
-                            ? 'Кожен ZIP — один PDF на пачку квитків.'
-                            : 'Скачається один .pdf без ZIP.'
-                        : splitArchives
-                          ? 'У кожному ZIP — окремі PDF на квиток.'
-                          : 'Один ZIP з окремим PDF на кожен квиток.'}
+                    Завжди: окремий PDF на квиток у ZIP.
+                    {combinedPdf ? ' Галочка — ще окремий .pdf на всі квитки.' : ''}
+                    {splitArchives ? ' Пачки — окремі ZIP.' : ''}
                 </p>
             </div>
 
@@ -655,11 +648,9 @@ export default function TicketPdfExport() {
             >
                 {busy
                     ? 'Генерація…'
-                    : combinedPdf && !splitArchives
-                      ? `Згенерувати PDF (${ranged.length})`
-                      : splitArchives
-                        ? `Згенерувати ZIP×${Math.max(1, Math.ceil(ranged.length / Math.max(1, ticketsPerArchive)))} (${ranged.length})`
-                        : `Згенерувати ZIP (${ranged.length} PDF)`}
+                    : splitArchives
+                      ? `Згенерувати ZIP×${Math.max(1, Math.ceil(ranged.length / Math.max(1, ticketsPerArchive)))}${combinedPdf ? ' + PDF' : ''} (${ranged.length})`
+                      : `Згенерувати ZIP (${ranged.length} PDF${combinedPdf ? ' + загальний' : ''})`}
             </button>
         </div>
     );

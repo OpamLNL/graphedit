@@ -252,11 +252,11 @@ export function chunkTickets<T>(items: T[], size: number): T[][] {
 }
 
 export type BuildTicketsExportOptions = {
-    /** Один багатосторінковий PDF замість окремого файлу на квиток */
+    /** Додатково: один багатосторінковий PDF на всі квитки пачки (окремі PDF лишаються) */
     combinedPdf: boolean;
     /** Розбити видачу на кілька ZIP */
     splitArchives: boolean;
-    /** Квитків (сторінок) в одному ZIP, якщо splitArchives */
+    /** Квитків в одному ZIP, якщо splitArchives */
     ticketsPerArchive: number;
 };
 
@@ -281,13 +281,12 @@ function zipName(meta: PdfTicketMeta, part: number, parts: number, fromNo: numbe
     return `${base}_pdf_part${part}of${parts}_${fromNo}-${toNo}.zip`;
 }
 
-/** Зібрати ZIP з окремими PDF або з одним multi-page PDF */
+/** ZIP лише з окремими PDF (по файлу на квиток) */
 async function buildOneZip(
     templateDataUrl: string,
     meta: PdfTicketMeta,
     tickets: TixTicketCode[],
     layout: PdfBarcodeLayout,
-    combinedPdf: boolean,
     onProgress?: (done: number, total: number) => void,
     progressOffset = 0,
     progressTotal?: number,
@@ -296,29 +295,21 @@ async function buildOneZip(
     const zip = new JSZip();
     const total = progressTotal ?? tickets.length;
 
-    if (combinedPdf) {
-        const pdf = await buildCombinedTicketPdf(
-            templateDataUrl,
-            tickets,
-            layout,
-            (done) => onProgress?.(progressOffset + done, total),
-        );
-        const fromNo = tickets[0].ticketNo;
-        const toNo = tickets[tickets.length - 1].ticketNo;
-        zip.file(combinedPdfName(meta, fromNo, toNo), pdf);
-    } else {
-        let done = 0;
-        for (const ticket of tickets) {
-            const blob = await buildTicketPdf(templateDataUrl, ticket, layout);
-            zip.file(ticketPdfFileName(meta, ticket.ticketNo), blob);
-            done += 1;
-            onProgress?.(progressOffset + done, total);
-        }
+    let done = 0;
+    for (const ticket of tickets) {
+        const blob = await buildTicketPdf(templateDataUrl, ticket, layout);
+        zip.file(ticketPdfFileName(meta, ticket.ticketNo), blob);
+        done += 1;
+        onProgress?.(progressOffset + done, total);
     }
+
     return zip.generateAsync({ type: 'blob' });
 }
 
-/** Пакет PDF → один або кілька ZIP (і опційно один загальний PDF у кожному) */
+/**
+ * Завжди: окремі PDF у ZIP (або кількох ZIP).
+ * Опційно додатково: один спільний multi-page PDF на ВСІ квитки (окремий файл).
+ */
 export async function buildTicketsExport(
     templateDataUrl: string,
     meta: PdfTicketMeta,
@@ -334,19 +325,6 @@ export async function buildTicketsExport(
         Number.isFinite(options.ticketsPerArchive) &&
         options.ticketsPerArchive >= 1;
 
-    // Один загальний PDF без розбиття на архіви — одразу .pdf
-    if (options.combinedPdf && !split) {
-        const blob = await buildCombinedTicketPdf(
-            templateDataUrl,
-            tickets,
-            layout,
-            onProgress,
-        );
-        const fromNo = tickets[0].ticketNo;
-        const toNo = tickets[tickets.length - 1].ticketNo;
-        return [{ fileName: combinedPdfName(meta, fromNo, toNo), blob }];
-    }
-
     const chunks = split ? chunkTickets(tickets, options.ticketsPerArchive) : [tickets];
     const files: TicketsExportFile[] = [];
     let offset = 0;
@@ -357,7 +335,6 @@ export async function buildTicketsExport(
             meta,
             chunk,
             layout,
-            options.combinedPdf,
             onProgress,
             offset,
             tickets.length,
@@ -370,6 +347,17 @@ export async function buildTicketsExport(
         });
         offset += chunk.length;
     }
+
+    if (options.combinedPdf) {
+        const combined = await buildCombinedTicketPdf(templateDataUrl, tickets, layout);
+        const fromNo = tickets[0].ticketNo;
+        const toNo = tickets[tickets.length - 1].ticketNo;
+        files.push({
+            fileName: combinedPdfName(meta, fromNo, toNo),
+            blob: combined,
+        });
+    }
+
     return files;
 }
 
