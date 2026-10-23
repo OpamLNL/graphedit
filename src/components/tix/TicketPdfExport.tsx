@@ -49,6 +49,9 @@ export default function TicketPdfExport() {
     const [toNo, setToNo] = useState(1);
 
     const [layout, setLayout] = useState<PdfBarcodeLayout>(DEFAULT_LAYOUT);
+    const [combinedPdf, setCombinedPdf] = useState(false);
+    const [splitArchives, setSplitArchives] = useState(false);
+    const [ticketsPerArchive, setTicketsPerArchive] = useState(50);
     const [busy, setBusy] = useState(false);
     const [dbBusy, setDbBusy] = useState(false);
     const [progress, setProgress] = useState('');
@@ -366,11 +369,15 @@ export default function TicketPdfExport() {
             setError('Спочатку завантаж JSON і вкажи діапазон квитків');
             return;
         }
+        if (splitArchives && (!Number.isFinite(ticketsPerArchive) || ticketsPerArchive < 1)) {
+            setError('Вкажи кількість квитків в одному архіві (≥ 1)');
+            return;
+        }
         setBusy(true);
         setProgress('Завантаження бібліотек…');
         try {
-            const { buildTicketsZip, downloadBlob } = await import('../../utils/tixPdf');
-            const zip = await buildTicketsZip(
+            const { buildTicketsExport, downloadBlobs } = await import('../../utils/tixPdf');
+            const files = await buildTicketsExport(
                 templateUrl,
                 {
                     eventNo: metaNo.trim(),
@@ -378,13 +385,23 @@ export default function TicketPdfExport() {
                 },
                 ranged,
                 layout,
+                {
+                    combinedPdf,
+                    splitArchives,
+                    ticketsPerArchive,
+                },
                 (done, total) => setProgress(`PDF ${done} / ${total}`),
             );
-            downloadBlob(
-                zip,
-                `${metaNo.trim()}_${(metaName.trim() || 'tickets').replace(/\s+/g, '_')}_pdf.zip`,
-            );
-            setProgress(`Готово: ${ranged.length} PDF у ZIP`);
+            setProgress(`Завантаження файлів (${files.length})…`);
+            await downloadBlobs(files);
+            const kind = combinedPdf ? 'загальний PDF' : 'окремі PDF';
+            const pack =
+                files.length === 1
+                    ? files[0].fileName.endsWith('.pdf')
+                        ? '1 файл'
+                        : '1 ZIP'
+                    : `${files.length} ZIP`;
+            setProgress(`Готово: ${ranged.length} квитків (${kind}), ${pack}`);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Помилка генерації PDF');
         } finally {
@@ -573,6 +590,60 @@ export default function TicketPdfExport() {
                 </p>
             </div>
 
+            <div className="space-y-3 rounded-xl border border-base-content/10 p-3">
+                <span className="label-text text-sm font-medium opacity-80">5. Пакування</span>
+                <label className="label cursor-pointer justify-start gap-3 py-1">
+                    <input
+                        type="checkbox"
+                        className="checkbox checkbox-sm"
+                        checked={combinedPdf}
+                        onChange={(e) => setCombinedPdf(e.target.checked)}
+                    />
+                    <span className="label-text text-sm">
+                        Один загальний PDF (усі квитки сторінками)
+                    </span>
+                </label>
+                <label className="label cursor-pointer justify-start gap-3 py-1">
+                    <input
+                        type="checkbox"
+                        className="checkbox checkbox-sm"
+                        checked={splitArchives}
+                        onChange={(e) => setSplitArchives(e.target.checked)}
+                    />
+                    <span className="label-text text-sm">Розбити на кілька ZIP-архівів</span>
+                </label>
+                {splitArchives ? (
+                    <label className="form-control w-full max-w-xs">
+                        <span className="label-text text-sm opacity-70">
+                            Квитків в одному архіві
+                        </span>
+                        <input
+                            type="number"
+                            min={1}
+                            className="input input-bordered w-full"
+                            value={ticketsPerArchive}
+                            onChange={(e) =>
+                                setTicketsPerArchive(Math.max(1, Number(e.target.value) || 1))
+                            }
+                        />
+                        <span className="label-text-alt opacity-60 mt-1">
+                            Буде приблизно{' '}
+                            {Math.max(1, Math.ceil(ranged.length / Math.max(1, ticketsPerArchive)))}{' '}
+                            архів(ів)
+                        </span>
+                    </label>
+                ) : null}
+                <p className="text-xs opacity-60">
+                    {combinedPdf
+                        ? splitArchives
+                            ? 'Кожен ZIP — один PDF на пачку квитків.'
+                            : 'Скачається один .pdf без ZIP.'
+                        : splitArchives
+                          ? 'У кожному ZIP — окремі PDF на квиток.'
+                          : 'Один ZIP з окремим PDF на кожен квиток.'}
+                </p>
+            </div>
+
             {error ? <p className="text-sm text-error">{error}</p> : null}
             {progress ? <p className="text-sm opacity-80">{progress}</p> : null}
 
@@ -582,7 +653,13 @@ export default function TicketPdfExport() {
                 disabled={busy}
                 onClick={() => void generate()}
             >
-                {busy ? 'Генерація…' : `Згенерувати ZIP (${ranged.length} PDF)`}
+                {busy
+                    ? 'Генерація…'
+                    : combinedPdf && !splitArchives
+                      ? `Згенерувати PDF (${ranged.length})`
+                      : splitArchives
+                        ? `Згенерувати ZIP×${Math.max(1, Math.ceil(ranged.length / Math.max(1, ticketsPerArchive)))} (${ranged.length})`
+                        : `Згенерувати ZIP (${ranged.length} PDF)`}
             </button>
         </div>
     );
