@@ -8,10 +8,11 @@ const JsBarcode =
 type Props = {
     value: string;
     label?: string;
+    ticketNo?: number;
 };
 
 /** Картинка 1D штрихкоду Code128 — саме її читає сканер камери */
-export default function TicketBarcodeImage({ value, label }: Props) {
+export default function TicketBarcodeImage({ value, label, ticketNo }: Props) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [dataUrl, setDataUrl] = useState('');
     const [error, setError] = useState('');
@@ -24,11 +25,16 @@ export default function TicketBarcodeImage({ value, label }: Props) {
         if (!canvas || !code) return;
 
         try {
+            const text =
+                ticketNo != null && Number.isFinite(ticketNo)
+                    ? `${ticketNo}  ${code}`
+                    : code;
             // Товстіші бари + тихі зони — краще читається камерою
             JsBarcode(canvas, code, {
                 format: 'CODE128',
                 displayValue: true,
-                fontSize: 16,
+                text,
+                fontSize: 20,
                 height: 120,
                 width: 2.5,
                 margin: 24,
@@ -39,7 +45,7 @@ export default function TicketBarcodeImage({ value, label }: Props) {
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Помилка штрихкоду');
         }
-    }, [value]);
+    }, [value, ticketNo]);
 
     return (
         <div className="flex flex-col items-center gap-2 w-full">

@@ -907,6 +907,7 @@ export default function TicketCheckinPage() {
                                 return t ? (
                                     <TicketBarcodeImage
                                         value={t.code}
+                                        ticketNo={t.ticketNo}
                                         label={`Квиток №${t.ticketNo}`}
                                     />
                                 ) : null;
@@ -1354,6 +1355,7 @@ export default function TicketCheckinPage() {
                                 return t ? (
                                     <TicketBarcodeImage
                                         value={t.code}
+                                        ticketNo={t.ticketNo}
                                         label={`Квиток №${t.ticketNo}`}
                                     />
                                 ) : null;

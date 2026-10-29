@@ -106,21 +106,26 @@ function barcodeDataUrl(
     widthPx: number,
     heightPx: number,
     orientation: PdfBarcodeOrientation,
+    ticketNo?: number,
 ): string {
     const longSide = Math.max(80, Math.round(Math.max(widthPx, heightPx)));
     // Трохи нижчі бари — більше місця під більший підпис коду
-    const shortSide = Math.max(20, Math.round(Math.min(widthPx, heightPx) * 0.58));
+    const shortSide = Math.max(20, Math.round(Math.min(widthPx, heightPx) * 0.55));
     const canvas = document.createElement('canvas');
     const moduleW = Math.max(1, Math.min(4, Math.round(longSide / 120)));
-    // Код під штрихкодом більший відносно смужок
+    const label =
+        ticketNo != null && Number.isFinite(ticketNo)
+            ? `${ticketNo}  ${code}`
+            : code;
+    // Підпис крупніший (номер + хеш); у штрихкоді лишається лише code
     const fontSize = Math.max(
-        12,
-        Math.min(28, Math.round(Math.max(shortSide * 0.55, longSide / Math.max(10, code.length)))),
+        14,
+        Math.min(34, Math.round(Math.max(shortSide * 0.72, longSide / Math.max(8, label.length)))),
     );
     JsBarcode(canvas, code, {
         format: 'CODE128',
         displayValue: true,
-        text: code,
+        text: label,
         fontSize,
         textMargin: 4,
         margin: 6,
@@ -290,7 +295,14 @@ async function renderTicketPageDataUrl(
     const bb = boxPx(pageW, pageH, layout.barcode);
     const orientation =
         layout.barcode.orientation === 'vertical' ? 'vertical' : 'horizontal';
-    const bcUrl = barcodeDataUrl(JsBarcode, ticket.code, bb.w, bb.h, orientation);
+    const bcUrl = barcodeDataUrl(
+        JsBarcode,
+        ticket.code,
+        bb.w,
+        bb.h,
+        orientation,
+        ticket.ticketNo,
+    );
     const bcImg = await loadImage(bcUrl);
     ctx.drawImage(bcImg, bb.x, bb.y, bb.w, bb.h);
 
