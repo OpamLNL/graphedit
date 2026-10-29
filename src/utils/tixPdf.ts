@@ -211,7 +211,7 @@ function boxMm(g: PageGeom, box: PdfBoxLayout) {
 function drawTicketNumber(pdf: JsPdfDoc, g: PageGeom, box: PdfNumberLayout, ticketNo: number) {
     if (!box.enabled) return;
     const b = boxMm(g, box);
-    const label = String(ticketNo);
+    const label = `№${ticketNo}`;
 
     // Менший кегль: ~55% висоти рамки (pt ≈ mm * 2.2 при scale, беремо стримано)
     let fontSize = Math.max(7, Math.min(28, b.h * 1.15));

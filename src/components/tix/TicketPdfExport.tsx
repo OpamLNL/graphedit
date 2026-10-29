@@ -608,7 +608,7 @@ export default function TicketPdfExport() {
                             >
                                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                                     <span className="text-base font-black text-orange-700 dark:text-orange-300">
-                                        №{fromNo || 1}
+                                        {`№${fromNo || 1}`}
                                     </span>
                                 </div>
                                 <div
