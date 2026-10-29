@@ -444,6 +444,14 @@ export default function TicketPdfExport() {
         setProgress('Завантаження бібліотек…');
         try {
             const { buildTicketsExport, downloadBlobs } = await import('../../utils/tixPdf');
+            // Явно передаємо номер: № + темно-оранжевий (SVG→canvas→JPEG)
+            const exportLayout = {
+                barcode,
+                ticketNo: {
+                    ...ticketNoBox,
+                    enabled: ticketNoBox.enabled !== false,
+                },
+            };
             const files = await buildTicketsExport(
                 templateUrl,
                 {
@@ -451,14 +459,18 @@ export default function TicketPdfExport() {
                     eventName: metaName.trim() || 'event',
                 },
                 ranged,
-                layout,
+                exportLayout,
                 {
                     individualPdfs,
                     combinedPdf,
                     splitArchives: individualPdfs && splitArchives,
                     ticketsPerArchive,
                 },
-                (done, total) => setProgress(`PDF ${done} / ${total}`),
+                (done, total) =>
+                    setProgress(
+                        `PDF ${done}/${total}` +
+                            (exportLayout.ticketNo.enabled ? ' · № оранж.' : ''),
+                    ),
             );
             setProgress(`Завантаження файлів (${files.length})…`);
             await downloadBlobs(files);

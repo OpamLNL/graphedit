@@ -154,20 +154,34 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     });
 }
 
-/** Старий API: лише штрихкод → повний layout без номера */
+/** Нормалізує layout; ticketNo завжди з явними полями */
 export function asTicketLayout(layout: PdfBarcodeLayout | PdfTicketLayout): PdfTicketLayout {
-    if ('barcode' in layout && layout.barcode) {
-        return layout;
+    if (layout && typeof layout === 'object' && 'barcode' in layout) {
+        const L = layout as PdfTicketLayout;
+        if (L.barcode) {
+            const n = L.ticketNo;
+            return {
+                barcode: L.barcode,
+                ticketNo: {
+                    // лише явний false вимикає; undefined → увімкнено
+                    enabled: n?.enabled !== false,
+                    xPercent: Number(n?.xPercent ?? 42),
+                    yPercent: Number(n?.yPercent ?? 58),
+                    widthPercent: Number(n?.widthPercent ?? 16),
+                    heightPercent: Number(n?.heightPercent ?? 5),
+                },
+            };
+        }
     }
     const b = layout as PdfBarcodeLayout;
     return {
         barcode: b,
         ticketNo: {
-            enabled: false,
-            xPercent: 40,
-            yPercent: 55,
-            widthPercent: 20,
-            heightPercent: 8,
+            enabled: true,
+            xPercent: 42,
+            yPercent: 58,
+            widthPercent: 16,
+            heightPercent: 5,
         },
     };
 }
@@ -195,7 +209,7 @@ async function pageGeom(templateDataUrl: string): Promise<PageGeom> {
     };
 }
 
-/** Темно-оранжевий номер квитка (гарантовано через canvas, не через Helvetica jsPDF) */
+/** Темно-оранжевий — малюємо через SVG (Unicode № + колір), не через jsPDF Helvetica */
 const TICKET_NO_COLOR = '#C2410C';
 
 function boxPx(
@@ -206,38 +220,50 @@ function boxPx(
     return {
         x: (box.xPercent / 100) * pageW,
         y: (box.yPercent / 100) * pageH,
-        w: (box.widthPercent / 100) * pageW,
-        h: (box.heightPercent / 100) * pageH,
+        w: Math.max(1, (box.widthPercent / 100) * pageW),
+        h: Math.max(1, (box.heightPercent / 100) * pageH),
     };
 }
 
-function paintTicketNumber(
+function escapeXml(s: string): string {
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+/** SVG з «№» + номер у темно-оранжевому — браузер рендерить надійно */
+function ticketNoSvgDataUrl(ticketNo: number, widthPx: number, heightPx: number): string {
+    const w = Math.max(32, Math.round(widthPx));
+    const h = Math.max(24, Math.round(heightPx));
+    const label = escapeXml(`№${ticketNo}`);
+    const fontSize = Math.max(10, Math.min(Math.floor(h * 0.72), Math.floor(w * 0.55)));
+    const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">` +
+        `<text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" ` +
+        `font-family="Arial, Helvetica, sans-serif" font-size="${fontSize}" font-weight="700" ` +
+        `fill="${TICKET_NO_COLOR}">${label}</text></svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+async function paintTicketNumber(
     ctx: CanvasRenderingContext2D,
     pageW: number,
     pageH: number,
     box: PdfNumberLayout,
     ticketNo: number,
 ) {
-    if (!box.enabled) return;
+    if (box.enabled === false) return;
     const b = boxPx(pageW, pageH, box);
-    // «№» + номер — браузерний шрифт (Helvetica у jsPDF цього символу не має)
-    const label = `\u2116${ticketNo}`;
-    let fontSize = Math.max(10, Math.floor(b.h * 0.7));
-    ctx.save();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = TICKET_NO_COLOR;
-    for (; fontSize >= 8; fontSize -= 1) {
-        ctx.font = `bold ${fontSize}px "Segoe UI", "Noto Sans", "DejaVu Sans", Arial, sans-serif`;
-        if (ctx.measureText(label).width <= b.w * 0.95) break;
-    }
-    ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2);
-    ctx.restore();
+    const url = ticketNoSvgDataUrl(ticketNo, b.w, b.h);
+    const img = await loadImage(url);
+    ctx.drawImage(img, b.x, b.y, b.w, b.h);
 }
 
 /**
  * Уся сторінка квитка = один canvas → JPEG у PDF.
- * Так «№», оранжевий колір і відсутність білого квадрата не залежать від шрифтів jsPDF.
+ * Номер: SVG (№ + #C2410C) → canvas. Без Helvetica jsPDF.
  */
 async function renderTicketPageDataUrl(
     templateImg: HTMLImageElement,
@@ -264,9 +290,8 @@ async function renderTicketPageDataUrl(
     const bcImg = await loadImage(bcUrl);
     ctx.drawImage(bcImg, bb.x, bb.y, bb.w, bb.h);
 
-    paintTicketNumber(ctx, pageW, pageH, layout.ticketNo, ticket.ticketNo);
+    await paintTicketNumber(ctx, pageW, pageH, layout.ticketNo, ticket.ticketNo);
 
-    // JPEG — без альфи, без «білого квадрата» від PNG у jsPDF
     return canvas.toDataURL('image/jpeg', 0.93);
 }
 
