@@ -100,34 +100,21 @@ async function getJSZip(): Promise<new () => {
     };
 }
 
-function barcodeDataUrl(
+/** Лише смужки Code128 (без підпису JsBarcode — його text часто ігнорується/обрізається). */
+function barcodeBarsDataUrl(
     JsBarcode: (canvas: HTMLCanvasElement, code: string, opts: object) => void,
     code: string,
     widthPx: number,
     heightPx: number,
     orientation: PdfBarcodeOrientation,
-    ticketNo?: number,
 ): string {
     const longSide = Math.max(80, Math.round(Math.max(widthPx, heightPx)));
-    // Трохи нижчі бари — більше місця під більший підпис коду
-    const shortSide = Math.max(20, Math.round(Math.min(widthPx, heightPx) * 0.55));
+    const shortSide = Math.max(24, Math.round(Math.min(widthPx, heightPx)));
     const canvas = document.createElement('canvas');
     const moduleW = Math.max(1, Math.min(4, Math.round(longSide / 120)));
-    const label =
-        ticketNo != null && Number.isFinite(ticketNo)
-            ? `${ticketNo}  ${code}`
-            : code;
-    // Підпис крупніший (номер + хеш); у штрихкоді лишається лише code
-    const fontSize = Math.max(
-        14,
-        Math.min(34, Math.round(Math.max(shortSide * 0.72, longSide / Math.max(8, label.length)))),
-    );
     JsBarcode(canvas, code, {
         format: 'CODE128',
-        displayValue: true,
-        text: label,
-        fontSize,
-        textMargin: 4,
+        displayValue: false,
         margin: 6,
         width: moduleW,
         height: shortSide,
@@ -150,6 +137,30 @@ function barcodeDataUrl(
     return rotated.toDataURL('image/png');
 }
 
+/** Підпис під барами: «номер  хеш» — fillText на сторінці, не JsBarcode.text */
+function paintBarcodeCaption(
+    ctx: CanvasRenderingContext2D,
+    box: { x: number; y: number; w: number; h: number },
+    ticketNo: number,
+    code: string,
+) {
+    const label = `${ticketNo}  ${code}`;
+    ctx.save();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(box.x, box.y, box.w, box.h);
+    ctx.fillStyle = '#000000';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    let fontSize = Math.max(16, Math.min(40, Math.floor(box.h * 0.72)));
+    while (fontSize >= 12) {
+        ctx.font = `bold ${fontSize}px Arial, Helvetica, sans-serif`;
+        if (ctx.measureText(label).width <= box.w * 0.96) break;
+        fontSize -= 1;
+    }
+    ctx.fillText(label, box.x + box.w / 2, box.y + box.h / 2);
+    ctx.restore();
+}
+
 function loadImage(src: string): Promise<HTMLImageElement> {
     return new Promise((resolve, reject) => {
         const img = new Image();
@@ -159,36 +170,22 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     });
 }
 
-/** Нормалізує layout; ticketNo завжди з явними полями */
+/** Нормалізує layout. Окрема рамка номера вимкнена — номер лише під штрихкодом. */
 export function asTicketLayout(layout: PdfBarcodeLayout | PdfTicketLayout): PdfTicketLayout {
+    const disabledNo: PdfNumberLayout = {
+        enabled: false,
+        xPercent: 42,
+        yPercent: 58,
+        widthPercent: 16,
+        heightPercent: 5,
+    };
     if (layout && typeof layout === 'object' && 'barcode' in layout) {
         const L = layout as PdfTicketLayout;
         if (L.barcode) {
-            const n = L.ticketNo;
-            return {
-                barcode: L.barcode,
-                ticketNo: {
-                    // лише явний false вимикає; undefined → увімкнено
-                    enabled: n?.enabled !== false,
-                    xPercent: Number(n?.xPercent ?? 42),
-                    yPercent: Number(n?.yPercent ?? 58),
-                    widthPercent: Number(n?.widthPercent ?? 16),
-                    heightPercent: Number(n?.heightPercent ?? 5),
-                },
-            };
+            return { barcode: L.barcode, ticketNo: disabledNo };
         }
     }
-    const b = layout as PdfBarcodeLayout;
-    return {
-        barcode: b,
-        ticketNo: {
-            enabled: true,
-            xPercent: 42,
-            yPercent: 58,
-            widthPercent: 16,
-            heightPercent: 5,
-        },
-    };
+    return { barcode: layout as PdfBarcodeLayout, ticketNo: disabledNo };
 }
 
 type PageGeom = {
@@ -214,9 +211,6 @@ async function pageGeom(templateDataUrl: string): Promise<PageGeom> {
     };
 }
 
-/** Темно-оранжевий номер — лише ctx.fillText на сторінці (без SVG Image — воно часто малює порожнечу) */
-const TICKET_NO_COLOR = '#C2410C';
-
 function boxPx(
     pageW: number,
     pageH: number,
@@ -230,49 +224,9 @@ function boxPx(
     };
 }
 
-function paintTicketNumber(
-    ctx: CanvasRenderingContext2D,
-    pageW: number,
-    pageH: number,
-    box: PdfNumberLayout,
-    ticketNo: number,
-) {
-    if (box.enabled === false) return;
-    const b = boxPx(pageW, pageH, box);
-    const cx = b.x + b.w / 2;
-    const cy = b.y + b.h / 2;
-
-    // Перевіряємо, чи шрифт вміє «№»
-    const fonts = ['Segoe UI', 'Arial Unicode MS', 'Noto Sans', 'DejaVu Sans', 'Arial'];
-    let fontFamily = 'Arial';
-    for (const f of fonts) {
-        ctx.font = `bold 48px "${f}"`;
-        if (ctx.measureText('№').width > 20) {
-            fontFamily = f;
-            break;
-        }
-    }
-
-    const hasNumero = ctx.measureText('№').width > 20;
-    const label = hasNumero ? `№${ticketNo}` : `No.${ticketNo}`;
-
-    let fontSize = Math.max(12, Math.floor(b.h * 0.7));
-    ctx.save();
-    ctx.fillStyle = TICKET_NO_COLOR;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    for (; fontSize >= 8; fontSize -= 1) {
-        ctx.font = `bold ${fontSize}px "${fontFamily}"`;
-        if (ctx.measureText(label).width <= b.w * 0.95) break;
-    }
-    // Тінь для читабельності на світлому бланку — колір лишається оранжевий
-    ctx.fillText(label, cx, cy);
-    ctx.restore();
-}
-
 /**
  * Уся сторінка квитка = один canvas → JPEG у PDF.
- * Номер: fillText № + #C2410C прямо на сторінці.
+ * Номер квитка лише під штрихкодом: «номер  хеш» (окремої рамки номера немає).
  */
 async function renderTicketPageDataUrl(
     templateImg: HTMLImageElement,
@@ -295,18 +249,17 @@ async function renderTicketPageDataUrl(
     const bb = boxPx(pageW, pageH, layout.barcode);
     const orientation =
         layout.barcode.orientation === 'vertical' ? 'vertical' : 'horizontal';
-    const bcUrl = barcodeDataUrl(
-        JsBarcode,
-        ticket.code,
-        bb.w,
-        bb.h,
-        orientation,
-        ticket.ticketNo,
-    );
+    const captionH = Math.max(22, Math.round(bb.h * 0.3));
+    const barsH = Math.max(24, bb.h - captionH);
+    const bcUrl = barcodeBarsDataUrl(JsBarcode, ticket.code, bb.w, barsH, orientation);
     const bcImg = await loadImage(bcUrl);
-    ctx.drawImage(bcImg, bb.x, bb.y, bb.w, bb.h);
-
-    paintTicketNumber(ctx, pageW, pageH, layout.ticketNo, ticket.ticketNo);
+    ctx.drawImage(bcImg, bb.x, bb.y, bb.w, barsH);
+    paintBarcodeCaption(
+        ctx,
+        { x: bb.x, y: bb.y + barsH, w: bb.w, h: bb.h - barsH },
+        ticket.ticketNo,
+        ticket.code,
+    );
 
     return canvas.toDataURL('image/jpeg', 0.93);
 }

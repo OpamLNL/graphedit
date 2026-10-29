@@ -4,12 +4,10 @@ import type {
     PdfBarcodeLayout,
     PdfBarcodeOrientation,
     PdfBoxLayout,
-    PdfNumberLayout,
     PdfTicketLayout,
 } from '../../utils/tixPdf';
 
 type DragMode = 'move' | 'resize-se';
-type ActiveBox = 'barcode' | 'ticketNo';
 
 const DEFAULT_BARCODE: PdfBarcodeLayout = {
     xPercent: 25,
@@ -17,14 +15,6 @@ const DEFAULT_BARCODE: PdfBarcodeLayout = {
     widthPercent: 50,
     heightPercent: 12,
     orientation: 'horizontal',
-};
-
-const DEFAULT_TICKET_NO: PdfNumberLayout = {
-    enabled: true,
-    xPercent: 42,
-    yPercent: 58,
-    widthPercent: 16,
-    heightPercent: 5,
 };
 
 function clamp(n: number, min: number, max: number): number {
@@ -72,7 +62,7 @@ function applyBoxDelta(
     };
 }
 
-/** PDF: шаблон, JSON, позиції штрихкоду й номера, пакування. */
+/** PDF: шаблон, JSON, позиція штрихкоду, пакування. Номер квитка — під штрихкодом. */
 export default function TicketPdfExport() {
     const [templateUrl, setTemplateUrl] = useState('');
     const [jsonText, setJsonText] = useState('');
@@ -84,8 +74,6 @@ export default function TicketPdfExport() {
     const [toNo, setToNo] = useState(1);
 
     const [barcode, setBarcode] = useState<PdfBarcodeLayout>(DEFAULT_BARCODE);
-    const [ticketNoBox, setTicketNoBox] = useState<PdfNumberLayout>(DEFAULT_TICKET_NO);
-    const [activeBox, setActiveBox] = useState<ActiveBox>('barcode');
 
     const [individualPdfs, setIndividualPdfs] = useState(true);
     const [combinedPdf, setCombinedPdf] = useState(false);
@@ -98,7 +86,6 @@ export default function TicketPdfExport() {
 
     const previewRef = useRef<HTMLDivElement>(null);
     const dragRef = useRef<{
-        target: ActiveBox;
         mode: DragMode;
         startX: number;
         startY: number;
@@ -106,8 +93,17 @@ export default function TicketPdfExport() {
     } | null>(null);
 
     const layout: PdfTicketLayout = useMemo(
-        () => ({ barcode, ticketNo: ticketNoBox }),
-        [barcode, ticketNoBox],
+        () => ({
+            barcode,
+            ticketNo: {
+                enabled: false,
+                xPercent: 0,
+                yPercent: 0,
+                widthPercent: 1,
+                heightPercent: 1,
+            },
+        }),
+        [barcode],
     );
 
     const ranged = useMemo(
@@ -127,12 +123,7 @@ export default function TicketPdfExport() {
             const dx = ((e.clientX - drag.startX) / rect.width) * 100;
             const dy = ((e.clientY - drag.startY) / rect.height) * 100;
             const next = applyBoxDelta(drag.origin, drag.mode, dx, dy);
-
-            if (drag.target === 'barcode') {
-                setBarcode((prev) => ({ ...prev, ...next }));
-            } else {
-                setTicketNoBox((prev) => ({ ...prev, ...next }));
-            }
+            setBarcode((prev) => ({ ...prev, ...next }));
         };
         const onUp = () => {
             dragRef.current = null;
@@ -373,15 +364,12 @@ export default function TicketPdfExport() {
 
     const onBoxPointerDown = (
         e: ReactPointerEvent<HTMLDivElement>,
-        target: ActiveBox,
         mode: DragMode,
         origin: PdfBoxLayout,
     ) => {
         e.preventDefault();
         e.stopPropagation();
-        setActiveBox(target);
         dragRef.current = {
-            target,
             mode,
             startX: e.clientX,
             startY: e.clientY,
@@ -397,17 +385,7 @@ export default function TicketPdfExport() {
         if (!rect.width || !rect.height) return;
         const x = ((e.clientX - rect.left) / rect.width) * 100;
         const y = ((e.clientY - rect.top) / rect.height) * 100;
-
-        if (activeBox === 'barcode') {
-            setBarcode((prev) => ({
-                ...prev,
-                xPercent: clamp(x - prev.widthPercent / 2, 0, 100 - prev.widthPercent),
-                yPercent: clamp(y - prev.heightPercent / 2, 0, 100 - prev.heightPercent),
-            }));
-            return;
-        }
-        if (!ticketNoBox.enabled) return;
-        setTicketNoBox((prev) => ({
+        setBarcode((prev) => ({
             ...prev,
             xPercent: clamp(x - prev.widthPercent / 2, 0, 100 - prev.widthPercent),
             yPercent: clamp(y - prev.heightPercent / 2, 0, 100 - prev.heightPercent),
@@ -444,14 +422,6 @@ export default function TicketPdfExport() {
         setProgress('Завантаження бібліотек…');
         try {
             const { buildTicketsExport, downloadBlobs } = await import('../../utils/tixPdf');
-            // Явно передаємо номер: № + темно-оранжевий (SVG→canvas→JPEG)
-            const exportLayout = {
-                barcode,
-                ticketNo: {
-                    ...ticketNoBox,
-                    enabled: ticketNoBox.enabled !== false,
-                },
-            };
             const files = await buildTicketsExport(
                 templateUrl,
                 {
@@ -459,18 +429,14 @@ export default function TicketPdfExport() {
                     eventName: metaName.trim() || 'event',
                 },
                 ranged,
-                exportLayout,
+                layout,
                 {
                     individualPdfs,
                     combinedPdf,
                     splitArchives: individualPdfs && splitArchives,
                     ticketsPerArchive,
                 },
-                (done, total) =>
-                    setProgress(
-                        `PDF ${done}/${total}` +
-                            (exportLayout.ticketNo.enabled ? ' · № оранж.' : ''),
-                    ),
+                (done, total) => setProgress(`PDF ${done}/${total}`),
             );
             setProgress(`Завантаження файлів (${files.length})…`);
             await downloadBlobs(files);
@@ -507,7 +473,8 @@ export default function TicketPdfExport() {
         <div className="space-y-5">
             <h2 className="text-xl font-bold">PDF квитки</h2>
             <p className="text-sm opacity-70">
-                1) шаблон 2) квитки 3) позиція штрихкоду й номера 4) пакування
+                1) шаблон 2) квитки 3) позиція штрихкоду 4) пакування. Під штрихкодом: номер +
+                хеш.
             </p>
 
             <label className="form-control w-full">
@@ -520,48 +487,11 @@ export default function TicketPdfExport() {
                 />
             </label>
 
-            <label className="label cursor-pointer justify-start gap-3 py-1 border border-warning/40 rounded-lg px-3 bg-warning/10">
-                <input
-                    type="checkbox"
-                    className="checkbox checkbox-warning"
-                    checked={ticketNoBox.enabled}
-                    onChange={(e) => {
-                        const enabled = e.target.checked;
-                        setTicketNoBox((p) => ({ ...p, enabled }));
-                        if (enabled) setActiveBox('ticketNo');
-                        else setActiveBox('barcode');
-                    }}
-                />
-                <span className="label-text text-sm font-medium">
-                    Друкувати номер квитка на бланку (окрема рамка на картинці)
-                </span>
-            </label>
-
             {templateUrl ? (
                 <div className="space-y-2">
                     <span className="label-text text-sm opacity-70">
-                        3. Позиції — синя рамка = штрихкод, помаранчева = номер квитка. Перетягни /
-                        кут = розмір / клік по фону = центр активної
+                        3. Позиція штрихкоду — перетягни рамку / кут = розмір / клік по фону = центр
                     </span>
-                    <div className="grid grid-cols-2 gap-2">
-                        <button
-                            type="button"
-                            className={`btn btn-sm ${activeBox === 'barcode' ? 'btn-primary' : 'btn-outline'}`}
-                            onClick={() => setActiveBox('barcode')}
-                        >
-                            Штрихкод
-                        </button>
-                        <button
-                            type="button"
-                            className={`btn btn-sm ${activeBox === 'ticketNo' ? 'btn-warning' : 'btn-outline'}`}
-                            onClick={() => {
-                                setTicketNoBox((p) => ({ ...p, enabled: true }));
-                                setActiveBox('ticketNo');
-                            }}
-                        >
-                            Номер квитка
-                        </button>
-                    </div>
                     <div
                         ref={previewRef}
                         className="relative w-full select-none overflow-hidden rounded-xl border border-base-content/15 bg-base-200 touch-none"
@@ -574,20 +504,14 @@ export default function TicketPdfExport() {
                             draggable={false}
                         />
                         <div
-                            className={`absolute border-2 cursor-move ${
-                                activeBox === 'barcode'
-                                    ? 'border-primary bg-primary/25'
-                                    : 'border-primary/50 bg-primary/10'
-                            }`}
+                            className="absolute border-2 cursor-move border-primary bg-primary/25"
                             style={{
                                 left: `${barcode.xPercent}%`,
                                 top: `${barcode.yPercent}%`,
                                 width: `${barcode.widthPercent}%`,
                                 height: `${barcode.heightPercent}%`,
                             }}
-                            onPointerDown={(e) =>
-                                onBoxPointerDown(e, 'barcode', 'move', barcode)
-                            }
+                            onPointerDown={(e) => onBoxPointerDown(e, 'move', barcode)}
                         >
                             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                                 <span className="text-[10px] font-semibold uppercase tracking-wide text-primary-content bg-primary/80 px-1.5 py-0.5 rounded">
@@ -597,55 +521,14 @@ export default function TicketPdfExport() {
                             <div
                                 className="absolute right-0 bottom-0 w-4 h-4 translate-x-1/2 translate-y-1/2 rounded-sm bg-primary border border-base-100 cursor-se-resize"
                                 onPointerDown={(e) =>
-                                    onBoxPointerDown(e, 'barcode', 'resize-se', barcode)
+                                    onBoxPointerDown(e, 'resize-se', barcode)
                                 }
                             />
                         </div>
-                        {ticketNoBox.enabled ? (
-                            <div
-                                className={`absolute border-2 border-dashed cursor-move ${
-                                    activeBox === 'ticketNo'
-                                        ? 'border-orange-500 bg-orange-500/30'
-                                        : 'border-orange-400 bg-orange-400/15'
-                                }`}
-                                style={{
-                                    left: `${ticketNoBox.xPercent}%`,
-                                    top: `${ticketNoBox.yPercent}%`,
-                                    width: `${ticketNoBox.widthPercent}%`,
-                                    height: `${ticketNoBox.heightPercent}%`,
-                                }}
-                                onPointerDown={(e) =>
-                                    onBoxPointerDown(e, 'ticketNo', 'move', ticketNoBox)
-                                }
-                            >
-                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                    <span
-                                        className="text-base font-black"
-                                        style={{ color: 'rgb(194, 65, 12)' }}
-                                    >
-                                        {`№${fromNo || 1}`}
-                                    </span>
-                                </div>
-                                <div
-                                    className="absolute right-0 bottom-0 w-4 h-4 translate-x-1/2 translate-y-1/2 rounded-sm bg-orange-500 border border-base-100 cursor-se-resize"
-                                    onPointerDown={(e) =>
-                                        onBoxPointerDown(
-                                            e,
-                                            'ticketNo',
-                                            'resize-se',
-                                            ticketNoBox,
-                                        )
-                                    }
-                                />
-                            </div>
-                        ) : null}
                     </div>
                     <p className="text-xs opacity-60 font-mono">
                         Штрих: X {barcode.xPercent.toFixed(1)}% Y {barcode.yPercent.toFixed(1)}% W{' '}
                         {barcode.widthPercent.toFixed(1)}% H {barcode.heightPercent.toFixed(1)}%
-                        {ticketNoBox.enabled
-                            ? ` · №: X ${ticketNoBox.xPercent.toFixed(1)}% Y ${ticketNoBox.yPercent.toFixed(1)}%`
-                            : ''}
                     </p>
                 </div>
             ) : null}
