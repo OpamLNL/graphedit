@@ -508,11 +508,28 @@ export default function TicketPdfExport() {
                 />
             </label>
 
+            <label className="label cursor-pointer justify-start gap-3 py-1 border border-warning/40 rounded-lg px-3 bg-warning/10">
+                <input
+                    type="checkbox"
+                    className="checkbox checkbox-warning"
+                    checked={ticketNoBox.enabled}
+                    onChange={(e) => {
+                        const enabled = e.target.checked;
+                        setTicketNoBox((p) => ({ ...p, enabled }));
+                        if (enabled) setActiveBox('ticketNo');
+                        else setActiveBox('barcode');
+                    }}
+                />
+                <span className="label-text text-sm font-medium">
+                    Друкувати номер квитка на бланку (окрема рамка на картинці)
+                </span>
+            </label>
+
             {templateUrl ? (
                 <div className="space-y-2">
                     <span className="label-text text-sm opacity-70">
-                        3. Позиції — обери рамку (штрихкод / номер), перетягни; кут — розмір; клік
-                        по фону — центр активної рамки
+                        3. Позиції — синя рамка = штрихкод, помаранчева = номер квитка. Перетягни /
+                        кут = розмір / клік по фону = центр активної
                     </span>
                     <div className="grid grid-cols-2 gap-2">
                         <button
@@ -524,12 +541,11 @@ export default function TicketPdfExport() {
                         </button>
                         <button
                             type="button"
-                            className={`btn btn-sm ${activeBox === 'ticketNo' ? 'btn-secondary' : 'btn-outline'}`}
+                            className={`btn btn-sm ${activeBox === 'ticketNo' ? 'btn-warning' : 'btn-outline'}`}
                             onClick={() => {
-                                setActiveBox('ticketNo');
                                 setTicketNoBox((p) => ({ ...p, enabled: true }));
+                                setActiveBox('ticketNo');
                             }}
-                            disabled={!ticketNoBox.enabled}
                         >
                             Номер квитка
                         </button>
@@ -575,10 +591,10 @@ export default function TicketPdfExport() {
                         </div>
                         {ticketNoBox.enabled ? (
                             <div
-                                className={`absolute border-2 cursor-move ${
+                                className={`absolute border-2 border-dashed cursor-move ${
                                     activeBox === 'ticketNo'
-                                        ? 'border-secondary bg-secondary/25'
-                                        : 'border-secondary/50 bg-secondary/10'
+                                        ? 'border-orange-500 bg-orange-500/30'
+                                        : 'border-orange-400 bg-orange-400/15'
                                 }`}
                                 style={{
                                     left: `${ticketNoBox.xPercent}%`,
@@ -591,10 +607,12 @@ export default function TicketPdfExport() {
                                 }
                             >
                                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                    <span className="text-sm font-bold opacity-80">№</span>
+                                    <span className="text-base font-black text-orange-700 dark:text-orange-300">
+                                        №{fromNo || 1}
+                                    </span>
                                 </div>
                                 <div
-                                    className="absolute right-0 bottom-0 w-4 h-4 translate-x-1/2 translate-y-1/2 rounded-sm bg-secondary border border-base-100 cursor-se-resize"
+                                    className="absolute right-0 bottom-0 w-4 h-4 translate-x-1/2 translate-y-1/2 rounded-sm bg-orange-500 border border-base-100 cursor-se-resize"
                                     onPointerDown={(e) =>
                                         onBoxPointerDown(
                                             e,
@@ -635,20 +653,6 @@ export default function TicketPdfExport() {
                         Вертикальна
                     </button>
                 </div>
-                <label className="label cursor-pointer justify-start gap-3 py-1">
-                    <input
-                        type="checkbox"
-                        className="checkbox checkbox-sm"
-                        checked={ticketNoBox.enabled}
-                        onChange={(e) => {
-                            const enabled = e.target.checked;
-                            setTicketNoBox((p) => ({ ...p, enabled }));
-                            if (enabled) setActiveBox('ticketNo');
-                            else setActiveBox('barcode');
-                        }}
-                    />
-                    <span className="label-text text-sm">Друкувати номер квитка (окрема рамка)</span>
-                </label>
             </div>
 
             <div className="space-y-3 rounded-xl border border-base-content/10 p-3">

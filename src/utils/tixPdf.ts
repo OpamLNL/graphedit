@@ -65,7 +65,11 @@ type JsPdfDoc = {
     setFont: (...args: unknown[]) => void;
     setFontSize: (size: number) => void;
     setTextColor: (...args: unknown[]) => void;
+    setDrawColor: (...args: unknown[]) => void;
+    setFillColor: (...args: unknown[]) => void;
+    rect: (...args: unknown[]) => void;
     text: (...args: unknown[]) => void;
+    getTextWidth: (text: string) => number;
     output: (type: string) => Blob;
 };
 
@@ -199,16 +203,29 @@ function drawTicketNumber(pdf: JsPdfDoc, g: PageGeom, box: PdfNumberLayout, tick
     if (!box.enabled) return;
     const b = boxMm(g, box);
     const label = String(ticketNo);
-    // Підганяємо розмір шрифту під висоту рамки
-    const fontSize = Math.max(8, Math.min(72, b.h * 2.2));
+    // Підганяємо розмір шрифту під висоту/ширину рамки
+    let fontSize = Math.max(10, Math.min(96, b.h * 2.4));
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(fontSize);
+    let tw = pdf.getTextWidth(label);
+    if (tw > b.w * 0.95 && tw > 0) {
+        fontSize = Math.max(8, fontSize * ((b.w * 0.95) / tw));
+        pdf.setFontSize(fontSize);
+        tw = pdf.getTextWidth(label);
+    }
+    // Легкий білий підклад — номер видно на темному шаблоні
+    const pad = Math.min(b.w, b.h) * 0.08;
+    pdf.setFillColor(255, 255, 255);
+    pdf.rect(b.x, b.y, b.w, b.h, 'F');
     pdf.setTextColor(0, 0, 0);
-    pdf.text(label, b.x + b.w / 2, b.y + b.h / 2, {
-        align: 'center',
-        baseline: 'middle',
-        maxWidth: b.w,
-    });
+    const x = b.x + b.w / 2;
+    const y = b.y + b.h / 2 + fontSize * 0.15;
+    try {
+        pdf.text(label, x, y, { align: 'center', baseline: 'middle' });
+    } catch {
+        pdf.text(label, b.x + Math.max(0, (b.w - tw) / 2), b.y + b.h * 0.72);
+    }
+    void pad;
 }
 
 function drawTicketPage(
