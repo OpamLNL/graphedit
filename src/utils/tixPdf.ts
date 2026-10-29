@@ -108,16 +108,21 @@ function barcodeDataUrl(
     orientation: PdfBarcodeOrientation,
 ): string {
     const longSide = Math.max(80, Math.round(Math.max(widthPx, heightPx)));
-    const shortSide = Math.max(24, Math.round(Math.min(widthPx, heightPx) * 0.72));
+    // Трохи нижчі бари — більше місця під більший підпис коду
+    const shortSide = Math.max(20, Math.round(Math.min(widthPx, heightPx) * 0.58));
     const canvas = document.createElement('canvas');
     const moduleW = Math.max(1, Math.min(4, Math.round(longSide / 120)));
-    const fontSize = Math.max(8, Math.min(16, Math.round(longSide / Math.max(12, code.length))));
+    // Код під штрихкодом більший відносно смужок
+    const fontSize = Math.max(
+        12,
+        Math.min(28, Math.round(Math.max(shortSide * 0.55, longSide / Math.max(10, code.length)))),
+    );
     JsBarcode(canvas, code, {
         format: 'CODE128',
         displayValue: true,
         text: code,
         fontSize,
-        textMargin: 2,
+        textMargin: 4,
         margin: 6,
         width: moduleW,
         height: shortSide,
@@ -203,7 +208,7 @@ function drawTicketNumber(pdf: JsPdfDoc, g: PageGeom, box: PdfNumberLayout, tick
     if (!box.enabled) return;
     const b = boxMm(g, box);
     const label = String(ticketNo);
-    // Підганяємо розмір шрифту під висоту/ширину рамки
+    // Підганяємо розмір шрифту під висоту/ширину рамки — без фону (прозорий)
     let fontSize = Math.max(10, Math.min(96, b.h * 2.4));
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(fontSize);
@@ -213,10 +218,6 @@ function drawTicketNumber(pdf: JsPdfDoc, g: PageGeom, box: PdfNumberLayout, tick
         pdf.setFontSize(fontSize);
         tw = pdf.getTextWidth(label);
     }
-    // Легкий білий підклад — номер видно на темному шаблоні
-    const pad = Math.min(b.w, b.h) * 0.08;
-    pdf.setFillColor(255, 255, 255);
-    pdf.rect(b.x, b.y, b.w, b.h, 'F');
     pdf.setTextColor(0, 0, 0);
     const x = b.x + b.w / 2;
     const y = b.y + b.h / 2 + fontSize * 0.15;
@@ -225,7 +226,6 @@ function drawTicketNumber(pdf: JsPdfDoc, g: PageGeom, box: PdfNumberLayout, tick
     } catch {
         pdf.text(label, b.x + Math.max(0, (b.w - tw) / 2), b.y + b.h * 0.72);
     }
-    void pad;
 }
 
 function drawTicketPage(
