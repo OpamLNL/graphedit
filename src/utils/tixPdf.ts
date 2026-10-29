@@ -195,97 +195,95 @@ async function pageGeom(templateDataUrl: string): Promise<PageGeom> {
     };
 }
 
-function boxMm(g: PageGeom, box: PdfBoxLayout) {
+/** Темно-оранжевий номер квитка (гарантовано через canvas, не через Helvetica jsPDF) */
+const TICKET_NO_COLOR = '#C2410C';
+
+function boxPx(
+    pageW: number,
+    pageH: number,
+    box: PdfBoxLayout,
+): { x: number; y: number; w: number; h: number } {
     return {
-        w: (g.widthMm * box.widthPercent) / 100,
-        h: (g.heightMm * box.heightPercent) / 100,
-        x: (g.widthMm * box.xPercent) / 100,
-        y: (g.heightMm * box.yPercent) / 100,
+        x: (box.xPercent / 100) * pageW,
+        y: (box.yPercent / 100) * pageH,
+        w: (box.widthPercent / 100) * pageW,
+        h: (box.heightPercent / 100) * pageH,
     };
 }
 
-/** Темно-оранжевий для номера квитка */
-const TICKET_NO_RGB = { r: 194, g: 65, b: 12 };
-
-/**
- * Номер малюємо на canvas поверх вирізки шаблону.
- * Helvetica у jsPDF не має «№» і Unicode-колір часто ламається —
- * тому текст (№ + колір) рендерить браузер, фон = бланк (без білого квадрата).
- */
-function ticketNoOverTemplateDataUrl(
-    templateImg: HTMLImageElement,
-    box: PdfNumberLayout,
-    ticketNo: number,
-): string {
-    const iw = templateImg.naturalWidth || templateImg.width;
-    const ih = templateImg.naturalHeight || templateImg.height;
-    const sx = (box.xPercent / 100) * iw;
-    const sy = (box.yPercent / 100) * ih;
-    const sw = Math.max(1, (box.widthPercent / 100) * iw);
-    const sh = Math.max(1, (box.heightPercent / 100) * ih);
-
-    const scale = 3;
-    const w = Math.max(64, Math.round(sw * scale));
-    const h = Math.max(48, Math.round(sh * scale));
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return '';
-
-    ctx.drawImage(templateImg, sx, sy, sw, sh, 0, 0, w, h);
-
-    const label = `№${ticketNo}`;
-    let fontSize = Math.floor(h * 0.62);
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = `rgb(${TICKET_NO_RGB.r},${TICKET_NO_RGB.g},${TICKET_NO_RGB.b})`;
-    for (; fontSize >= 8; fontSize -= 1) {
-        ctx.font = `700 ${fontSize}px "Segoe UI", "Arial Unicode MS", Arial, sans-serif`;
-        if (ctx.measureText(label).width <= w * 0.92) break;
-    }
-    ctx.fillText(label, w / 2, h / 2);
-    return canvas.toDataURL('image/png');
-}
-
-function drawTicketNumber(
-    pdf: JsPdfDoc,
-    templateImg: HTMLImageElement,
-    g: PageGeom,
+function paintTicketNumber(
+    ctx: CanvasRenderingContext2D,
+    pageW: number,
+    pageH: number,
     box: PdfNumberLayout,
     ticketNo: number,
 ) {
     if (!box.enabled) return;
-    const b = boxMm(g, box);
-    const url = ticketNoOverTemplateDataUrl(templateImg, box, ticketNo);
-    if (!url) return;
-    pdf.addImage(url, 'PNG', b.x, b.y, b.w, b.h);
+    const b = boxPx(pageW, pageH, box);
+    // «№» + номер — браузерний шрифт (Helvetica у jsPDF цього символу не має)
+    const label = `\u2116${ticketNo}`;
+    let fontSize = Math.max(10, Math.floor(b.h * 0.7));
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = TICKET_NO_COLOR;
+    for (; fontSize >= 8; fontSize -= 1) {
+        ctx.font = `bold ${fontSize}px "Segoe UI", "Noto Sans", "DejaVu Sans", Arial, sans-serif`;
+        if (ctx.measureText(label).width <= b.w * 0.95) break;
+    }
+    ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2);
+    ctx.restore();
 }
 
-function drawTicketPage(
-    pdf: JsPdfDoc,
-    JsBarcode: (canvas: HTMLCanvasElement, code: string, opts: object) => void,
-    templateDataUrl: string,
+/**
+ * Уся сторінка квитка = один canvas → JPEG у PDF.
+ * Так «№», оранжевий колір і відсутність білого квадрата не залежать від шрифтів jsPDF.
+ */
+async function renderTicketPageDataUrl(
     templateImg: HTMLImageElement,
+    JsBarcode: (canvas: HTMLCanvasElement, code: string, opts: object) => void,
     ticket: TixTicketCode,
-    g: PageGeom,
     layout: PdfTicketLayout,
-) {
-    pdf.addImage(templateDataUrl, g.fmt, 0, 0, g.widthMm, g.heightMm);
+): Promise<string> {
+    const pageW = templateImg.naturalWidth || templateImg.width;
+    const pageH = templateImg.naturalHeight || templateImg.height;
+    if (!pageW || !pageH) throw new Error('Порожній шаблон');
 
-    const bb = boxMm(g, layout.barcode);
+    const canvas = document.createElement('canvas');
+    canvas.width = pageW;
+    canvas.height = pageH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas недоступний');
+
+    ctx.drawImage(templateImg, 0, 0, pageW, pageH);
+
+    const bb = boxPx(pageW, pageH, layout.barcode);
     const orientation =
         layout.barcode.orientation === 'vertical' ? 'vertical' : 'horizontal';
-    const bc = barcodeDataUrl(JsBarcode, ticket.code, bb.w * 8, bb.h * 8, orientation);
-    pdf.addImage(bc, 'PNG', bb.x, bb.y, bb.w, bb.h);
+    const bcUrl = barcodeDataUrl(JsBarcode, ticket.code, bb.w, bb.h, orientation);
+    const bcImg = await loadImage(bcUrl);
+    ctx.drawImage(bcImg, bb.x, bb.y, bb.w, bb.h);
 
-    drawTicketNumber(pdf, templateImg, g, layout.ticketNo, ticket.ticketNo);
+    paintTicketNumber(ctx, pageW, pageH, layout.ticketNo, ticket.ticketNo);
+
+    // JPEG — без альфи, без «білого квадрата» від PNG у jsPDF
+    return canvas.toDataURL('image/jpeg', 0.93);
 }
 
 function blobFromPdf(pdf: JsPdfDoc): Blob {
     const out = pdf.output('blob');
     if (!(out instanceof Blob)) throw new Error('jspdf.output не повернув Blob');
     return out;
+}
+
+async function addRasterPage(
+    pdf: JsPdfDoc,
+    pageDataUrl: string,
+    g: PageGeom,
+    isFirst: boolean,
+) {
+    if (!isFirst) pdf.addPage([g.widthMm, g.heightMm], g.orient);
+    pdf.addImage(pageDataUrl, 'JPEG', 0, 0, g.widthMm, g.heightMm);
 }
 
 /** Один PDF: одна сторінка — один квиток */
@@ -301,12 +299,13 @@ export async function buildTicketPdf(
         loadImage(templateDataUrl),
     ]);
     const g = await pageGeom(templateDataUrl);
+    const pageUrl = await renderTicketPageDataUrl(templateImg, JsBarcode, ticket, full);
     const pdf = new JsPDF({
         orientation: g.orient,
         unit: 'mm',
         format: [g.widthMm, g.heightMm],
     });
-    drawTicketPage(pdf, JsBarcode, templateDataUrl, templateImg, ticket, g, full);
+    addRasterPage(pdf, pageUrl, g, true);
     return blobFromPdf(pdf);
 }
 
@@ -331,8 +330,13 @@ export async function buildCombinedTicketPdf(
         format: [g.widthMm, g.heightMm],
     });
     for (let i = 0; i < tickets.length; i += 1) {
-        if (i > 0) pdf.addPage([g.widthMm, g.heightMm], g.orient);
-        drawTicketPage(pdf, JsBarcode, templateDataUrl, templateImg, tickets[i], g, full);
+        const pageUrl = await renderTicketPageDataUrl(
+            templateImg,
+            JsBarcode,
+            tickets[i],
+            full,
+        );
+        addRasterPage(pdf, pageUrl, g, i === 0);
         onProgress?.(i + 1, tickets.length);
     }
     return blobFromPdf(pdf);
