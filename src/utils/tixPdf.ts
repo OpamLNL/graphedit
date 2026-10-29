@@ -205,65 +205,36 @@ function boxMm(g: PageGeom, box: PdfBoxLayout) {
 }
 
 /**
- * Номер поверх вирізки шаблону.
- * jsPDF часто малює «прозорий» PNG як білий прямокутник — тому фон беремо з бланка.
+ * Номер ТІЛЬКИ як векторний текст — без PNG/rect.
+ * (addImage PNG у jsPDF часто дає білий прямокутник замість прозорості)
  */
-function ticketNoOverTemplateDataUrl(
-    templateImg: HTMLImageElement,
-    box: PdfNumberLayout,
-    ticketNo: number,
-): string {
-    const iw = templateImg.naturalWidth || templateImg.width;
-    const ih = templateImg.naturalHeight || templateImg.height;
-    const sx = (box.xPercent / 100) * iw;
-    const sy = (box.yPercent / 100) * ih;
-    const sw = Math.max(1, (box.widthPercent / 100) * iw);
-    const sh = Math.max(1, (box.heightPercent / 100) * ih);
-
-    const scale = 2;
-    const w = Math.max(64, Math.round(sw * scale));
-    const h = Math.max(64, Math.round(sh * scale));
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return '';
-
-    // Фон = шматок шаблону (не білий)
-    ctx.drawImage(templateImg, sx, sy, sw, sh, 0, 0, w, h);
-
-    const label = String(ticketNo);
-    let fontSize = Math.floor(h * 0.9);
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#000000';
-    for (; fontSize >= 8; fontSize -= 1) {
-        ctx.font = `bold ${fontSize}px Helvetica, Arial, sans-serif`;
-        if (ctx.measureText(label).width <= w * 0.96) break;
-    }
-    ctx.fillText(label, w / 2, h / 2);
-    return canvas.toDataURL('image/png');
-}
-
-function drawTicketNumber(
-    pdf: JsPdfDoc,
-    templateImg: HTMLImageElement,
-    g: PageGeom,
-    box: PdfNumberLayout,
-    ticketNo: number,
-) {
+function drawTicketNumber(pdf: JsPdfDoc, g: PageGeom, box: PdfNumberLayout, ticketNo: number) {
     if (!box.enabled) return;
     const b = boxMm(g, box);
-    const url = ticketNoOverTemplateDataUrl(templateImg, box, ticketNo);
-    if (!url) return;
-    pdf.addImage(url, 'PNG', b.x, b.y, b.w, b.h);
+    const label = String(ticketNo);
+
+    // Менший кегль: ~55% висоти рамки (pt ≈ mm * 2.2 при scale, беремо стримано)
+    let fontSize = Math.max(7, Math.min(28, b.h * 1.15));
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(fontSize);
+    let tw = pdf.getTextWidth(label);
+    if (tw > b.w * 0.9 && tw > 0) {
+        fontSize = Math.max(7, fontSize * ((b.w * 0.9) / tw));
+        pdf.setFontSize(fontSize);
+        tw = pdf.getTextWidth(label);
+    }
+
+    pdf.setTextColor(0, 0, 0);
+    // Жодного fill/rect/addImage — фон бланка лишається видимим
+    const x = b.x + b.w / 2;
+    const y = b.y + b.h / 2;
+    pdf.text(label, x, y, { align: 'center', baseline: 'middle' });
 }
 
 function drawTicketPage(
     pdf: JsPdfDoc,
     JsBarcode: (canvas: HTMLCanvasElement, code: string, opts: object) => void,
     templateDataUrl: string,
-    templateImg: HTMLImageElement,
     ticket: TixTicketCode,
     g: PageGeom,
     layout: PdfTicketLayout,
@@ -276,7 +247,7 @@ function drawTicketPage(
     const bc = barcodeDataUrl(JsBarcode, ticket.code, bb.w * 8, bb.h * 8, orientation);
     pdf.addImage(bc, 'PNG', bb.x, bb.y, bb.w, bb.h);
 
-    drawTicketNumber(pdf, templateImg, g, layout.ticketNo, ticket.ticketNo);
+    drawTicketNumber(pdf, g, layout.ticketNo, ticket.ticketNo);
 }
 
 function blobFromPdf(pdf: JsPdfDoc): Blob {
@@ -292,18 +263,14 @@ export async function buildTicketPdf(
     layout: PdfBarcodeLayout | PdfTicketLayout,
 ): Promise<Blob> {
     const full = asTicketLayout(layout);
-    const [JsPDF, JsBarcode, templateImg] = await Promise.all([
-        getJsPdfCtor(),
-        getJsBarcode(),
-        loadImage(templateDataUrl),
-    ]);
+    const [JsPDF, JsBarcode] = await Promise.all([getJsPdfCtor(), getJsBarcode()]);
     const g = await pageGeom(templateDataUrl);
     const pdf = new JsPDF({
         orientation: g.orient,
         unit: 'mm',
         format: [g.widthMm, g.heightMm],
     });
-    drawTicketPage(pdf, JsBarcode, templateDataUrl, templateImg, ticket, g, full);
+    drawTicketPage(pdf, JsBarcode, templateDataUrl, ticket, g, full);
     return blobFromPdf(pdf);
 }
 
@@ -316,11 +283,7 @@ export async function buildCombinedTicketPdf(
 ): Promise<Blob> {
     if (!tickets.length) throw new Error('Немає квитків у діапазоні');
     const full = asTicketLayout(layout);
-    const [JsPDF, JsBarcode, templateImg] = await Promise.all([
-        getJsPdfCtor(),
-        getJsBarcode(),
-        loadImage(templateDataUrl),
-    ]);
+    const [JsPDF, JsBarcode] = await Promise.all([getJsPdfCtor(), getJsBarcode()]);
     const g = await pageGeom(templateDataUrl);
     const pdf = new JsPDF({
         orientation: g.orient,
@@ -329,7 +292,7 @@ export async function buildCombinedTicketPdf(
     });
     for (let i = 0; i < tickets.length; i += 1) {
         if (i > 0) pdf.addPage([g.widthMm, g.heightMm], g.orient);
-        drawTicketPage(pdf, JsBarcode, templateDataUrl, templateImg, tickets[i], g, full);
+        drawTicketPage(pdf, JsBarcode, templateDataUrl, tickets[i], g, full);
         onProgress?.(i + 1, tickets.length);
     }
     return blobFromPdf(pdf);

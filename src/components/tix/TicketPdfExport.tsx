@@ -21,10 +21,10 @@ const DEFAULT_BARCODE: PdfBarcodeLayout = {
 
 const DEFAULT_TICKET_NO: PdfNumberLayout = {
     enabled: true,
-    xPercent: 40,
-    yPercent: 55,
-    widthPercent: 20,
-    heightPercent: 8,
+    xPercent: 42,
+    yPercent: 58,
+    widthPercent: 16,
+    heightPercent: 5,
 };
 
 function clamp(n: number, min: number, max: number): number {
