@@ -204,28 +204,36 @@ function boxMm(g: PageGeom, box: PdfBoxLayout) {
     };
 }
 
+/** Номер квитка як PNG з альфою — без білого прямокутника */
+function ticketNoDataUrl(ticketNo: number, widthPx: number, heightPx: number): string {
+    const w = Math.max(48, Math.round(widthPx));
+    const h = Math.max(48, Math.round(heightPx));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return '';
+    ctx.clearRect(0, 0, w, h); // повністю прозорий фон
+    const label = String(ticketNo);
+    let fontSize = Math.floor(h * 0.9);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#000000';
+    for (; fontSize >= 8; fontSize -= 1) {
+        ctx.font = `bold ${fontSize}px Helvetica, Arial, sans-serif`;
+        if (ctx.measureText(label).width <= w * 0.96) break;
+    }
+    ctx.fillText(label, w / 2, h / 2);
+    return canvas.toDataURL('image/png');
+}
+
 function drawTicketNumber(pdf: JsPdfDoc, g: PageGeom, box: PdfNumberLayout, ticketNo: number) {
     if (!box.enabled) return;
     const b = boxMm(g, box);
-    const label = String(ticketNo);
-    // Підганяємо розмір шрифту під висоту/ширину рамки — без фону (прозорий)
-    let fontSize = Math.max(10, Math.min(96, b.h * 2.4));
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(fontSize);
-    let tw = pdf.getTextWidth(label);
-    if (tw > b.w * 0.95 && tw > 0) {
-        fontSize = Math.max(8, fontSize * ((b.w * 0.95) / tw));
-        pdf.setFontSize(fontSize);
-        tw = pdf.getTextWidth(label);
-    }
-    pdf.setTextColor(0, 0, 0);
-    const x = b.x + b.w / 2;
-    const y = b.y + b.h / 2 + fontSize * 0.15;
-    try {
-        pdf.text(label, x, y, { align: 'center', baseline: 'middle' });
-    } catch {
-        pdf.text(label, b.x + Math.max(0, (b.w - tw) / 2), b.y + b.h * 0.72);
-    }
+    const url = ticketNoDataUrl(ticketNo, b.w * 12, b.h * 12);
+    if (!url) return;
+    // PNG з прозорістю — лише чорні цифри поверх шаблону
+    pdf.addImage(url, 'PNG', b.x, b.y, b.w, b.h);
 }
 
 function drawTicketPage(
