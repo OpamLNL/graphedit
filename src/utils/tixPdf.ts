@@ -224,7 +224,8 @@ function drawTicketNumber(pdf: JsPdfDoc, g: PageGeom, box: PdfNumberLayout, tick
         tw = pdf.getTextWidth(label);
     }
 
-    pdf.setTextColor(0, 0, 0);
+    // Темно-оранжевий
+    pdf.setTextColor(194, 65, 12);
     // Жодного fill/rect/addImage — фон бланка лишається видимим
     const x = b.x + b.w / 2;
     const y = b.y + b.h / 2;

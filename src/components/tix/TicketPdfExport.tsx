@@ -607,7 +607,10 @@ export default function TicketPdfExport() {
                                 }
                             >
                                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                    <span className="text-base font-black text-orange-700 dark:text-orange-300">
+                                    <span
+                                        className="text-base font-black"
+                                        style={{ color: 'rgb(194, 65, 12)' }}
+                                    >
                                         {`№${fromNo || 1}`}
                                     </span>
                                 </div>
