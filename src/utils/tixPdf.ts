@@ -2,7 +2,7 @@ import type { TixTicketCode } from '../api/tix';
 
 export type PdfBarcodeOrientation = 'horizontal' | 'vertical';
 
-export type PdfBarcodeLayout = {
+export type PdfBoxLayout = {
     /** % від ширини шаблону (лівий край) */
     xPercent: number;
     /** % від висоти шаблону (верхній край) */
@@ -11,8 +11,21 @@ export type PdfBarcodeLayout = {
     widthPercent: number;
     /** % від висоти шаблону */
     heightPercent: number;
+};
+
+export type PdfBarcodeLayout = PdfBoxLayout & {
     /** Горизонтальний (звичайний) або вертикальний (повернутий на 90°) */
     orientation: PdfBarcodeOrientation;
+};
+
+export type PdfNumberLayout = PdfBoxLayout & {
+    /** Малювати номер квитка */
+    enabled: boolean;
+};
+
+export type PdfTicketLayout = {
+    barcode: PdfBarcodeLayout;
+    ticketNo: PdfNumberLayout;
 };
 
 export type PdfTicketMeta = {
@@ -49,6 +62,10 @@ async function getJsBarcode(): Promise<(canvas: HTMLCanvasElement, code: string,
 type JsPdfDoc = {
     addImage: (...args: unknown[]) => void;
     addPage: (...args: unknown[]) => void;
+    setFont: (...args: unknown[]) => void;
+    setFontSize: (size: number) => void;
+    setTextColor: (...args: unknown[]) => void;
+    text: (...args: unknown[]) => void;
     output: (type: string) => Blob;
 };
 
@@ -86,12 +103,10 @@ function barcodeDataUrl(
     heightPx: number,
     orientation: PdfBarcodeOrientation,
 ): string {
-    // Підпис = той самий code, що в смужках (не номер квитка)
     const longSide = Math.max(80, Math.round(Math.max(widthPx, heightPx)));
     const shortSide = Math.max(24, Math.round(Math.min(widthPx, heightPx) * 0.72));
     const canvas = document.createElement('canvas');
     const moduleW = Math.max(1, Math.min(4, Math.round(longSide / 120)));
-    // Довгий HMAC — дрібніший шрифт, щоб вмістився
     const fontSize = Math.max(8, Math.min(16, Math.round(longSide / Math.max(12, code.length))));
     JsBarcode(canvas, code, {
         format: 'CODE128',
@@ -130,22 +145,32 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     });
 }
 
+/** Старий API: лише штрихкод → повний layout без номера */
+export function asTicketLayout(layout: PdfBarcodeLayout | PdfTicketLayout): PdfTicketLayout {
+    if ('barcode' in layout && layout.barcode) {
+        return layout;
+    }
+    const b = layout as PdfBarcodeLayout;
+    return {
+        barcode: b,
+        ticketNo: {
+            enabled: false,
+            xPercent: 40,
+            yPercent: 55,
+            widthPercent: 20,
+            heightPercent: 8,
+        },
+    };
+}
+
 type PageGeom = {
     widthMm: number;
     heightMm: number;
     orient: 'landscape' | 'portrait';
     fmt: 'JPEG' | 'PNG';
-    boxW: number;
-    boxH: number;
-    boxX: number;
-    boxY: number;
-    barcodeOrientation: PdfBarcodeOrientation;
 };
 
-async function pageGeom(
-    templateDataUrl: string,
-    layout: PdfBarcodeLayout,
-): Promise<PageGeom> {
+async function pageGeom(templateDataUrl: string): Promise<PageGeom> {
     const img = await loadImage(templateDataUrl);
     const pageWpx = img.naturalWidth || img.width;
     const pageHpx = img.naturalHeight || img.height;
@@ -158,12 +183,32 @@ async function pageGeom(
         heightMm,
         orient: widthMm >= heightMm ? 'landscape' : 'portrait',
         fmt: templateDataUrl.startsWith('data:image/jpeg') ? 'JPEG' : 'PNG',
-        boxW: (widthMm * layout.widthPercent) / 100,
-        boxH: (heightMm * layout.heightPercent) / 100,
-        boxX: (widthMm * layout.xPercent) / 100,
-        boxY: (heightMm * layout.yPercent) / 100,
-        barcodeOrientation: layout.orientation === 'vertical' ? 'vertical' : 'horizontal',
     };
+}
+
+function boxMm(g: PageGeom, box: PdfBoxLayout) {
+    return {
+        w: (g.widthMm * box.widthPercent) / 100,
+        h: (g.heightMm * box.heightPercent) / 100,
+        x: (g.widthMm * box.xPercent) / 100,
+        y: (g.heightMm * box.yPercent) / 100,
+    };
+}
+
+function drawTicketNumber(pdf: JsPdfDoc, g: PageGeom, box: PdfNumberLayout, ticketNo: number) {
+    if (!box.enabled) return;
+    const b = boxMm(g, box);
+    const label = String(ticketNo);
+    // Підганяємо розмір шрифту під висоту рамки
+    const fontSize = Math.max(8, Math.min(72, b.h * 2.2));
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(fontSize);
+    pdf.setTextColor(0, 0, 0);
+    pdf.text(label, b.x + b.w / 2, b.y + b.h / 2, {
+        align: 'center',
+        baseline: 'middle',
+        maxWidth: b.w,
+    });
 }
 
 function drawTicketPage(
@@ -172,16 +217,17 @@ function drawTicketPage(
     templateDataUrl: string,
     ticket: TixTicketCode,
     g: PageGeom,
+    layout: PdfTicketLayout,
 ) {
     pdf.addImage(templateDataUrl, g.fmt, 0, 0, g.widthMm, g.heightMm);
-    const bc = barcodeDataUrl(
-        JsBarcode,
-        ticket.code,
-        g.boxW * 8,
-        g.boxH * 8,
-        g.barcodeOrientation,
-    );
-    pdf.addImage(bc, 'PNG', g.boxX, g.boxY, g.boxW, g.boxH);
+
+    const bb = boxMm(g, layout.barcode);
+    const orientation =
+        layout.barcode.orientation === 'vertical' ? 'vertical' : 'horizontal';
+    const bc = barcodeDataUrl(JsBarcode, ticket.code, bb.w * 8, bb.h * 8, orientation);
+    pdf.addImage(bc, 'PNG', bb.x, bb.y, bb.w, bb.h);
+
+    drawTicketNumber(pdf, g, layout.ticketNo, ticket.ticketNo);
 }
 
 function blobFromPdf(pdf: JsPdfDoc): Blob {
@@ -194,16 +240,17 @@ function blobFromPdf(pdf: JsPdfDoc): Blob {
 export async function buildTicketPdf(
     templateDataUrl: string,
     ticket: TixTicketCode,
-    layout: PdfBarcodeLayout,
+    layout: PdfBarcodeLayout | PdfTicketLayout,
 ): Promise<Blob> {
+    const full = asTicketLayout(layout);
     const [JsPDF, JsBarcode] = await Promise.all([getJsPdfCtor(), getJsBarcode()]);
-    const g = await pageGeom(templateDataUrl, layout);
+    const g = await pageGeom(templateDataUrl);
     const pdf = new JsPDF({
         orientation: g.orient,
         unit: 'mm',
         format: [g.widthMm, g.heightMm],
     });
-    drawTicketPage(pdf, JsBarcode, templateDataUrl, ticket, g);
+    drawTicketPage(pdf, JsBarcode, templateDataUrl, ticket, g, full);
     return blobFromPdf(pdf);
 }
 
@@ -211,12 +258,13 @@ export async function buildTicketPdf(
 export async function buildCombinedTicketPdf(
     templateDataUrl: string,
     tickets: TixTicketCode[],
-    layout: PdfBarcodeLayout,
+    layout: PdfBarcodeLayout | PdfTicketLayout,
     onProgress?: (done: number, total: number) => void,
 ): Promise<Blob> {
     if (!tickets.length) throw new Error('Немає квитків у діапазоні');
+    const full = asTicketLayout(layout);
     const [JsPDF, JsBarcode] = await Promise.all([getJsPdfCtor(), getJsBarcode()]);
-    const g = await pageGeom(templateDataUrl, layout);
+    const g = await pageGeom(templateDataUrl);
     const pdf = new JsPDF({
         orientation: g.orient,
         unit: 'mm',
@@ -224,7 +272,7 @@ export async function buildCombinedTicketPdf(
     });
     for (let i = 0; i < tickets.length; i += 1) {
         if (i > 0) pdf.addPage([g.widthMm, g.heightMm], g.orient);
-        drawTicketPage(pdf, JsBarcode, templateDataUrl, tickets[i], g);
+        drawTicketPage(pdf, JsBarcode, templateDataUrl, tickets[i], g, full);
         onProgress?.(i + 1, tickets.length);
     }
     return blobFromPdf(pdf);
@@ -252,9 +300,11 @@ export function chunkTickets<T>(items: T[], size: number): T[][] {
 }
 
 export type BuildTicketsExportOptions = {
-    /** Додатково: один багатосторінковий PDF на всі квитки пачки (окремі PDF лишаються) */
+    /** Окремі PDF у ZIP (можна вимкнути) */
+    individualPdfs: boolean;
+    /** Спільний PDF на діапазон — незалежно від окремих */
     combinedPdf: boolean;
-    /** Розбити видачу на кілька ZIP */
+    /** Розбити окремі PDF на кілька ZIP */
     splitArchives: boolean;
     /** Квитків в одному ZIP, якщо splitArchives */
     ticketsPerArchive: number;
@@ -281,12 +331,11 @@ function zipName(meta: PdfTicketMeta, part: number, parts: number, fromNo: numbe
     return `${base}_pdf_part${part}of${parts}_${fromNo}-${toNo}.zip`;
 }
 
-/** ZIP лише з окремими PDF (по файлу на квиток) */
 async function buildOneZip(
     templateDataUrl: string,
     meta: PdfTicketMeta,
     tickets: TixTicketCode[],
-    layout: PdfBarcodeLayout,
+    layout: PdfTicketLayout,
     onProgress?: (done: number, total: number) => void,
     progressOffset = 0,
     progressTotal?: number,
@@ -307,49 +356,62 @@ async function buildOneZip(
 }
 
 /**
- * Завжди: окремі PDF у ZIP (або кількох ZIP).
- * Опційно додатково: один спільний multi-page PDF на ВСІ квитки (окремий файл).
+ * individualPdfs і combinedPdf — незалежні.
+ * Можна згенерувати лише спільний PDF, лише ZIP, або обидва.
  */
 export async function buildTicketsExport(
     templateDataUrl: string,
     meta: PdfTicketMeta,
     tickets: TixTicketCode[],
-    layout: PdfBarcodeLayout,
+    layout: PdfBarcodeLayout | PdfTicketLayout,
     options: BuildTicketsExportOptions,
     onProgress?: (done: number, total: number) => void,
 ): Promise<TicketsExportFile[]> {
     if (!tickets.length) throw new Error('Немає квитків у діапазоні');
+    if (!options.individualPdfs && !options.combinedPdf) {
+        throw new Error('Увімкни окремі PDF і/або спільний PDF');
+    }
 
-    const split =
-        options.splitArchives &&
-        Number.isFinite(options.ticketsPerArchive) &&
-        options.ticketsPerArchive >= 1;
-
-    const chunks = split ? chunkTickets(tickets, options.ticketsPerArchive) : [tickets];
+    const full = asTicketLayout(layout);
     const files: TicketsExportFile[] = [];
-    let offset = 0;
-    for (let i = 0; i < chunks.length; i += 1) {
-        const chunk = chunks[i];
-        const blob = await buildOneZip(
-            templateDataUrl,
-            meta,
-            chunk,
-            layout,
-            onProgress,
-            offset,
-            tickets.length,
-        );
-        const fromNo = chunk[0].ticketNo;
-        const toNo = chunk[chunk.length - 1].ticketNo;
-        files.push({
-            fileName: zipName(meta, i + 1, chunks.length, fromNo, toNo),
-            blob,
-        });
-        offset += chunk.length;
+
+    if (options.individualPdfs) {
+        const split =
+            options.splitArchives &&
+            Number.isFinite(options.ticketsPerArchive) &&
+            options.ticketsPerArchive >= 1;
+        const chunks = split ? chunkTickets(tickets, options.ticketsPerArchive) : [tickets];
+        let offset = 0;
+        for (let i = 0; i < chunks.length; i += 1) {
+            const chunk = chunks[i];
+            const blob = await buildOneZip(
+                templateDataUrl,
+                meta,
+                chunk,
+                full,
+                onProgress,
+                offset,
+                tickets.length,
+            );
+            const fromNo = chunk[0].ticketNo;
+            const toNo = chunk[chunk.length - 1].ticketNo;
+            files.push({
+                fileName: zipName(meta, i + 1, chunks.length, fromNo, toNo),
+                blob,
+            });
+            offset += chunk.length;
+        }
     }
 
     if (options.combinedPdf) {
-        const combined = await buildCombinedTicketPdf(templateDataUrl, tickets, layout);
+        const combined = await buildCombinedTicketPdf(
+            templateDataUrl,
+            tickets,
+            full,
+            options.individualPdfs
+                ? undefined
+                : onProgress,
+        );
         const fromNo = tickets[0].ticketNo;
         const toNo = tickets[tickets.length - 1].ticketNo;
         files.push({
@@ -366,7 +428,7 @@ export async function buildTicketsZip(
     templateDataUrl: string,
     meta: PdfTicketMeta,
     tickets: TixTicketCode[],
-    layout: PdfBarcodeLayout,
+    layout: PdfBarcodeLayout | PdfTicketLayout,
     onProgress?: (done: number, total: number) => void,
 ): Promise<Blob> {
     const files = await buildTicketsExport(
@@ -374,7 +436,12 @@ export async function buildTicketsZip(
         meta,
         tickets,
         layout,
-        { combinedPdf: false, splitArchives: false, ticketsPerArchive: tickets.length },
+        {
+            individualPdfs: true,
+            combinedPdf: false,
+            splitArchives: false,
+            ticketsPerArchive: tickets.length,
+        },
         onProgress,
     );
     return files[0].blob;
@@ -389,7 +456,6 @@ export function downloadBlob(blob: Blob, fileName: string) {
     URL.revokeObjectURL(url);
 }
 
-/** Кілька файлів підряд (з невеликою паузою — інакше браузер глушить) */
 export async function downloadBlobs(files: TicketsExportFile[]) {
     for (let i = 0; i < files.length; i += 1) {
         downloadBlob(files[i].blob, files[i].fileName);

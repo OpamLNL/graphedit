@@ -1,15 +1,30 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { tixApi, type TixTicketCode } from '../../api/tix';
-import type { PdfBarcodeLayout, PdfBarcodeOrientation } from '../../utils/tixPdf';
+import type {
+    PdfBarcodeLayout,
+    PdfBarcodeOrientation,
+    PdfBoxLayout,
+    PdfNumberLayout,
+    PdfTicketLayout,
+} from '../../utils/tixPdf';
 
 type DragMode = 'move' | 'resize-se';
+type ActiveBox = 'barcode' | 'ticketNo';
 
-const DEFAULT_LAYOUT: PdfBarcodeLayout = {
+const DEFAULT_BARCODE: PdfBarcodeLayout = {
     xPercent: 25,
     yPercent: 70,
     widthPercent: 50,
     heightPercent: 12,
     orientation: 'horizontal',
+};
+
+const DEFAULT_TICKET_NO: PdfNumberLayout = {
+    enabled: true,
+    xPercent: 40,
+    yPercent: 55,
+    widthPercent: 20,
+    heightPercent: 8,
 };
 
 function clamp(n: number, min: number, max: number): number {
@@ -37,7 +52,27 @@ function filterByRange(
         .sort((a, b) => a.ticketNo - b.ticketNo);
 }
 
-/** PDF: усе вводиться тут — шаблон, JSON, позиція на картинці, орієнтація, діапазон. */
+function applyBoxDelta(
+    origin: PdfBoxLayout,
+    mode: DragMode,
+    dx: number,
+    dy: number,
+): PdfBoxLayout {
+    if (mode === 'move') {
+        return {
+            ...origin,
+            xPercent: clamp(origin.xPercent + dx, 0, 100 - origin.widthPercent),
+            yPercent: clamp(origin.yPercent + dy, 0, 100 - origin.heightPercent),
+        };
+    }
+    return {
+        ...origin,
+        widthPercent: clamp(origin.widthPercent + dx, 4, 100 - origin.xPercent),
+        heightPercent: clamp(origin.heightPercent + dy, 3, 100 - origin.yPercent),
+    };
+}
+
+/** PDF: шаблон, JSON, позиції штрихкоду й номера, пакування. */
 export default function TicketPdfExport() {
     const [templateUrl, setTemplateUrl] = useState('');
     const [jsonText, setJsonText] = useState('');
@@ -48,7 +83,11 @@ export default function TicketPdfExport() {
     const [fromNo, setFromNo] = useState(1);
     const [toNo, setToNo] = useState(1);
 
-    const [layout, setLayout] = useState<PdfBarcodeLayout>(DEFAULT_LAYOUT);
+    const [barcode, setBarcode] = useState<PdfBarcodeLayout>(DEFAULT_BARCODE);
+    const [ticketNoBox, setTicketNoBox] = useState<PdfNumberLayout>(DEFAULT_TICKET_NO);
+    const [activeBox, setActiveBox] = useState<ActiveBox>('barcode');
+
+    const [individualPdfs, setIndividualPdfs] = useState(true);
     const [combinedPdf, setCombinedPdf] = useState(false);
     const [splitArchives, setSplitArchives] = useState(false);
     const [ticketsPerArchive, setTicketsPerArchive] = useState(50);
@@ -59,11 +98,17 @@ export default function TicketPdfExport() {
 
     const previewRef = useRef<HTMLDivElement>(null);
     const dragRef = useRef<{
+        target: ActiveBox;
         mode: DragMode;
         startX: number;
         startY: number;
-        origin: PdfBarcodeLayout;
+        origin: PdfBoxLayout;
     } | null>(null);
+
+    const layout: PdfTicketLayout = useMemo(
+        () => ({ barcode, ticketNo: ticketNoBox }),
+        [barcode, ticketNoBox],
+    );
 
     const ranged = useMemo(
         () => filterByRange(tickets, fromNo, toNo),
@@ -81,22 +126,13 @@ export default function TicketPdfExport() {
 
             const dx = ((e.clientX - drag.startX) / rect.width) * 100;
             const dy = ((e.clientY - drag.startY) / rect.height) * 100;
-            const o = drag.origin;
+            const next = applyBoxDelta(drag.origin, drag.mode, dx, dy);
 
-            if (drag.mode === 'move') {
-                setLayout({
-                    ...o,
-                    xPercent: clamp(o.xPercent + dx, 0, 100 - o.widthPercent),
-                    yPercent: clamp(o.yPercent + dy, 0, 100 - o.heightPercent),
-                });
-                return;
+            if (drag.target === 'barcode') {
+                setBarcode((prev) => ({ ...prev, ...next }));
+            } else {
+                setTicketNoBox((prev) => ({ ...prev, ...next }));
             }
-
-            setLayout({
-                ...o,
-                widthPercent: clamp(o.widthPercent + dx, 4, 100 - o.xPercent),
-                heightPercent: clamp(o.heightPercent + dy, 3, 100 - o.yPercent),
-            });
         };
         const onUp = () => {
             dragRef.current = null;
@@ -206,7 +242,12 @@ export default function TicketPdfExport() {
         setProgress('');
         if (!file) return;
         const name = file.name.toLowerCase();
-        if (!name.endsWith('.json') && file.type && !file.type.includes('json') && file.type !== 'text/plain') {
+        if (
+            !name.endsWith('.json') &&
+            file.type &&
+            !file.type.includes('json') &&
+            file.type !== 'text/plain'
+        ) {
             setError('Обери файл .json');
             return;
         }
@@ -235,10 +276,12 @@ export default function TicketPdfExport() {
         setDbBusy(true);
         try {
             const ev = await tixApi.getByEventNo(eventNo, true);
-            const all: TixTicketCode[] = (ev.tickets ?? []).map((t) => ({
-                ticketNo: t.ticketNo,
-                code: String(t.code || t.barcode || ''),
-            })).filter((t) => t.code);
+            const all: TixTicketCode[] = (ev.tickets ?? [])
+                .map((t) => ({
+                    ticketNo: t.ticketNo,
+                    code: String(t.code || t.barcode || ''),
+                }))
+                .filter((t) => t.code);
             if (!all.length) {
                 throw new Error(`У заході №${eventNo} немає квитків у базі`);
             }
@@ -264,7 +307,6 @@ export default function TicketPdfExport() {
 
     const downloadJson = () => {
         setError('');
-        // 1) уже застосовані квитки 2) інакше — текст з поля JSON
         let body = '';
         let count = 0;
         if (ranged.length) {
@@ -314,7 +356,7 @@ export default function TicketPdfExport() {
     };
 
     const setOrientation = (orientation: PdfBarcodeOrientation) => {
-        setLayout((prev) => {
+        setBarcode((prev) => {
             if (prev.orientation === orientation) return prev;
             const widthPercent = prev.heightPercent;
             const heightPercent = prev.widthPercent;
@@ -329,14 +371,21 @@ export default function TicketPdfExport() {
         });
     };
 
-    const onBoxPointerDown = (e: ReactPointerEvent<HTMLDivElement>, mode: DragMode) => {
+    const onBoxPointerDown = (
+        e: ReactPointerEvent<HTMLDivElement>,
+        target: ActiveBox,
+        mode: DragMode,
+        origin: PdfBoxLayout,
+    ) => {
         e.preventDefault();
         e.stopPropagation();
+        setActiveBox(target);
         dragRef.current = {
+            target,
             mode,
             startX: e.clientX,
             startY: e.clientY,
-            origin: { ...layout },
+            origin: { ...origin },
         };
     };
 
@@ -348,7 +397,17 @@ export default function TicketPdfExport() {
         if (!rect.width || !rect.height) return;
         const x = ((e.clientX - rect.left) / rect.width) * 100;
         const y = ((e.clientY - rect.top) / rect.height) * 100;
-        setLayout((prev) => ({
+
+        if (activeBox === 'barcode') {
+            setBarcode((prev) => ({
+                ...prev,
+                xPercent: clamp(x - prev.widthPercent / 2, 0, 100 - prev.widthPercent),
+                yPercent: clamp(y - prev.heightPercent / 2, 0, 100 - prev.heightPercent),
+            }));
+            return;
+        }
+        if (!ticketNoBox.enabled) return;
+        setTicketNoBox((prev) => ({
             ...prev,
             xPercent: clamp(x - prev.widthPercent / 2, 0, 100 - prev.widthPercent),
             yPercent: clamp(y - prev.heightPercent / 2, 0, 100 - prev.heightPercent),
@@ -369,7 +428,15 @@ export default function TicketPdfExport() {
             setError('Спочатку завантаж JSON і вкажи діапазон квитків');
             return;
         }
-        if (splitArchives && (!Number.isFinite(ticketsPerArchive) || ticketsPerArchive < 1)) {
+        if (!individualPdfs && !combinedPdf) {
+            setError('Увімкни окремі PDF і/або спільний PDF');
+            return;
+        }
+        if (
+            individualPdfs &&
+            splitArchives &&
+            (!Number.isFinite(ticketsPerArchive) || ticketsPerArchive < 1)
+        ) {
             setError('Вкажи кількість квитків в одному архіві (≥ 1)');
             return;
         }
@@ -386,8 +453,9 @@ export default function TicketPdfExport() {
                 ranged,
                 layout,
                 {
+                    individualPdfs,
                     combinedPdf,
-                    splitArchives,
+                    splitArchives: individualPdfs && splitArchives,
                     ticketsPerArchive,
                 },
                 (done, total) => setProgress(`PDF ${done} / ${total}`),
@@ -395,10 +463,11 @@ export default function TicketPdfExport() {
             setProgress(`Завантаження файлів (${files.length})…`);
             await downloadBlobs(files);
             const zipCount = files.filter((f) => f.fileName.endsWith('.zip')).length;
-            const extra = combinedPdf ? ' + 1 загальний PDF' : '';
-            setProgress(
-                `Готово: ${ranged.length} окремих PDF у ${zipCount} ZIP${extra}`,
-            );
+            const pdfCount = files.filter((f) => f.fileName.endsWith('.pdf')).length;
+            const parts: string[] = [];
+            if (zipCount) parts.push(`${ranged.length} окремих у ${zipCount} ZIP`);
+            if (pdfCount) parts.push(`${pdfCount} спільний PDF`);
+            setProgress(`Готово: ${parts.join(' + ') || 'файли'}`);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Помилка генерації PDF');
         } finally {
@@ -406,11 +475,27 @@ export default function TicketPdfExport() {
         }
     };
 
+    const generateLabel = () => {
+        if (busy) return 'Генерація…';
+        const bits: string[] = [];
+        if (individualPdfs) {
+            if (splitArchives) {
+                bits.push(
+                    `ZIP×${Math.max(1, Math.ceil(ranged.length / Math.max(1, ticketsPerArchive)))}`,
+                );
+            } else {
+                bits.push(`ZIP (${ranged.length})`);
+            }
+        }
+        if (combinedPdf) bits.push('спільний PDF');
+        return bits.length ? `Згенерувати: ${bits.join(' + ')}` : 'Обери що генерувати';
+    };
+
     return (
         <div className="space-y-5">
             <h2 className="text-xl font-bold">PDF квитки</h2>
             <p className="text-sm opacity-70">
-                1) шаблон 2) квитки з бази або JSON 3) позиція + орієнтація → ZIP
+                1) шаблон 2) квитки 3) позиція штрихкоду й номера 4) пакування
             </p>
 
             <label className="form-control w-full">
@@ -426,9 +511,29 @@ export default function TicketPdfExport() {
             {templateUrl ? (
                 <div className="space-y-2">
                     <span className="label-text text-sm opacity-70">
-                        3. Позиція на картинці — перетягни рамку, кут змінює розмір, клік по фону
-                        ставить центр
+                        3. Позиції — обери рамку (штрихкод / номер), перетягни; кут — розмір; клік
+                        по фону — центр активної рамки
                     </span>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button
+                            type="button"
+                            className={`btn btn-sm ${activeBox === 'barcode' ? 'btn-primary' : 'btn-outline'}`}
+                            onClick={() => setActiveBox('barcode')}
+                        >
+                            Штрихкод
+                        </button>
+                        <button
+                            type="button"
+                            className={`btn btn-sm ${activeBox === 'ticketNo' ? 'btn-secondary' : 'btn-outline'}`}
+                            onClick={() => {
+                                setActiveBox('ticketNo');
+                                setTicketNoBox((p) => ({ ...p, enabled: true }));
+                            }}
+                            disabled={!ticketNoBox.enabled}
+                        >
+                            Номер квитка
+                        </button>
+                    </div>
                     <div
                         ref={previewRef}
                         className="relative w-full select-none overflow-hidden rounded-xl border border-base-content/15 bg-base-200 touch-none"
@@ -441,29 +546,73 @@ export default function TicketPdfExport() {
                             draggable={false}
                         />
                         <div
-                            className="absolute border-2 border-primary bg-primary/25 cursor-move"
+                            className={`absolute border-2 cursor-move ${
+                                activeBox === 'barcode'
+                                    ? 'border-primary bg-primary/25'
+                                    : 'border-primary/50 bg-primary/10'
+                            }`}
                             style={{
-                                left: `${layout.xPercent}%`,
-                                top: `${layout.yPercent}%`,
-                                width: `${layout.widthPercent}%`,
-                                height: `${layout.heightPercent}%`,
+                                left: `${barcode.xPercent}%`,
+                                top: `${barcode.yPercent}%`,
+                                width: `${barcode.widthPercent}%`,
+                                height: `${barcode.heightPercent}%`,
                             }}
-                            onPointerDown={(e) => onBoxPointerDown(e, 'move')}
+                            onPointerDown={(e) =>
+                                onBoxPointerDown(e, 'barcode', 'move', barcode)
+                            }
                         >
                             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                                 <span className="text-[10px] font-semibold uppercase tracking-wide text-primary-content bg-primary/80 px-1.5 py-0.5 rounded">
-                                    {layout.orientation === 'vertical' ? 'верт.' : 'гориз.'}
+                                    штрих {barcode.orientation === 'vertical' ? 'верт.' : 'гориз.'}
                                 </span>
                             </div>
                             <div
                                 className="absolute right-0 bottom-0 w-4 h-4 translate-x-1/2 translate-y-1/2 rounded-sm bg-primary border border-base-100 cursor-se-resize"
-                                onPointerDown={(e) => onBoxPointerDown(e, 'resize-se')}
+                                onPointerDown={(e) =>
+                                    onBoxPointerDown(e, 'barcode', 'resize-se', barcode)
+                                }
                             />
                         </div>
+                        {ticketNoBox.enabled ? (
+                            <div
+                                className={`absolute border-2 cursor-move ${
+                                    activeBox === 'ticketNo'
+                                        ? 'border-secondary bg-secondary/25'
+                                        : 'border-secondary/50 bg-secondary/10'
+                                }`}
+                                style={{
+                                    left: `${ticketNoBox.xPercent}%`,
+                                    top: `${ticketNoBox.yPercent}%`,
+                                    width: `${ticketNoBox.widthPercent}%`,
+                                    height: `${ticketNoBox.heightPercent}%`,
+                                }}
+                                onPointerDown={(e) =>
+                                    onBoxPointerDown(e, 'ticketNo', 'move', ticketNoBox)
+                                }
+                            >
+                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                    <span className="text-sm font-bold opacity-80">№</span>
+                                </div>
+                                <div
+                                    className="absolute right-0 bottom-0 w-4 h-4 translate-x-1/2 translate-y-1/2 rounded-sm bg-secondary border border-base-100 cursor-se-resize"
+                                    onPointerDown={(e) =>
+                                        onBoxPointerDown(
+                                            e,
+                                            'ticketNo',
+                                            'resize-se',
+                                            ticketNoBox,
+                                        )
+                                    }
+                                />
+                            </div>
+                        ) : null}
                     </div>
                     <p className="text-xs opacity-60 font-mono">
-                        X {layout.xPercent.toFixed(1)}% · Y {layout.yPercent.toFixed(1)}% · W{' '}
-                        {layout.widthPercent.toFixed(1)}% · H {layout.heightPercent.toFixed(1)}%
+                        Штрих: X {barcode.xPercent.toFixed(1)}% Y {barcode.yPercent.toFixed(1)}% W{' '}
+                        {barcode.widthPercent.toFixed(1)}% H {barcode.heightPercent.toFixed(1)}%
+                        {ticketNoBox.enabled
+                            ? ` · №: X ${ticketNoBox.xPercent.toFixed(1)}% Y ${ticketNoBox.yPercent.toFixed(1)}%`
+                            : ''}
                     </p>
                 </div>
             ) : null}
@@ -473,19 +622,33 @@ export default function TicketPdfExport() {
                 <div className="grid grid-cols-2 gap-2">
                     <button
                         type="button"
-                        className={`btn btn-sm ${layout.orientation === 'horizontal' ? 'btn-primary' : 'btn-outline'}`}
+                        className={`btn btn-sm ${barcode.orientation === 'horizontal' ? 'btn-primary' : 'btn-outline'}`}
                         onClick={() => setOrientation('horizontal')}
                     >
                         Горизонтальна
                     </button>
                     <button
                         type="button"
-                        className={`btn btn-sm ${layout.orientation === 'vertical' ? 'btn-primary' : 'btn-outline'}`}
+                        className={`btn btn-sm ${barcode.orientation === 'vertical' ? 'btn-primary' : 'btn-outline'}`}
                         onClick={() => setOrientation('vertical')}
                     >
                         Вертикальна
                     </button>
                 </div>
+                <label className="label cursor-pointer justify-start gap-3 py-1">
+                    <input
+                        type="checkbox"
+                        className="checkbox checkbox-sm"
+                        checked={ticketNoBox.enabled}
+                        onChange={(e) => {
+                            const enabled = e.target.checked;
+                            setTicketNoBox((p) => ({ ...p, enabled }));
+                            if (enabled) setActiveBox('ticketNo');
+                            else setActiveBox('barcode');
+                        }}
+                    />
+                    <span className="label-text text-sm">Друкувати номер квитка (окрема рамка)</span>
+                </label>
             </div>
 
             <div className="space-y-3 rounded-xl border border-base-content/10 p-3">
@@ -560,9 +723,7 @@ export default function TicketPdfExport() {
                 </label>
 
                 <label className="form-control w-full">
-                    <span className="label-text text-xs opacity-60">
-                        Або встав JSON текстом
-                    </span>
+                    <span className="label-text text-xs opacity-60">Або встав JSON текстом</span>
                     <textarea
                         className="textarea textarea-bordered w-full font-mono text-xs h-36"
                         placeholder='{"eventNo":"1","name":"Концерт","tickets":[{"ticketNo":1,"code":"…"}]}'
@@ -593,47 +754,67 @@ export default function TicketPdfExport() {
                     <input
                         type="checkbox"
                         className="checkbox checkbox-sm"
-                        checked={combinedPdf}
-                        onChange={(e) => setCombinedPdf(e.target.checked)}
+                        checked={individualPdfs}
+                        onChange={(e) => setIndividualPdfs(e.target.checked)}
                     />
                     <span className="label-text text-sm">
-                        Додатково скачати один загальний PDF (усі квитки сторінками)
+                        Окремі PDF на кожен квиток (ZIP)
                     </span>
                 </label>
                 <label className="label cursor-pointer justify-start gap-3 py-1">
                     <input
                         type="checkbox"
                         className="checkbox checkbox-sm"
-                        checked={splitArchives}
-                        onChange={(e) => setSplitArchives(e.target.checked)}
+                        checked={combinedPdf}
+                        onChange={(e) => setCombinedPdf(e.target.checked)}
                     />
-                    <span className="label-text text-sm">Розбити на кілька ZIP-архівів</span>
+                    <span className="label-text text-sm">
+                        Спільний PDF на вказаний діапазон (незалежно від окремих)
+                    </span>
                 </label>
-                {splitArchives ? (
-                    <label className="form-control w-full max-w-xs">
-                        <span className="label-text text-sm opacity-70">
-                            Квитків в одному архіві
-                        </span>
-                        <input
-                            type="number"
-                            min={1}
-                            className="input input-bordered w-full"
-                            value={ticketsPerArchive}
-                            onChange={(e) =>
-                                setTicketsPerArchive(Math.max(1, Number(e.target.value) || 1))
-                            }
-                        />
-                        <span className="label-text-alt opacity-60 mt-1">
-                            Буде приблизно{' '}
-                            {Math.max(1, Math.ceil(ranged.length / Math.max(1, ticketsPerArchive)))}{' '}
-                            архів(ів)
-                        </span>
-                    </label>
+                {individualPdfs ? (
+                    <>
+                        <label className="label cursor-pointer justify-start gap-3 py-1">
+                            <input
+                                type="checkbox"
+                                className="checkbox checkbox-sm"
+                                checked={splitArchives}
+                                onChange={(e) => setSplitArchives(e.target.checked)}
+                            />
+                            <span className="label-text text-sm">Розбити на кілька ZIP</span>
+                        </label>
+                        {splitArchives ? (
+                            <label className="form-control w-full max-w-xs">
+                                <span className="label-text text-sm opacity-70">
+                                    Квитків в одному архіві
+                                </span>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    className="input input-bordered w-full"
+                                    value={ticketsPerArchive}
+                                    onChange={(e) =>
+                                        setTicketsPerArchive(
+                                            Math.max(1, Number(e.target.value) || 1),
+                                        )
+                                    }
+                                />
+                                <span className="label-text-alt opacity-60 mt-1">
+                                    ≈{' '}
+                                    {Math.max(
+                                        1,
+                                        Math.ceil(
+                                            ranged.length / Math.max(1, ticketsPerArchive),
+                                        ),
+                                    )}{' '}
+                                    архів(ів)
+                                </span>
+                            </label>
+                        ) : null}
+                    </>
                 ) : null}
                 <p className="text-xs opacity-60">
-                    Завжди: окремий PDF на квиток у ZIP.
-                    {combinedPdf ? ' Галочка — ще окремий .pdf на всі квитки.' : ''}
-                    {splitArchives ? ' Пачки — окремі ZIP.' : ''}
+                    Можна лише ZIP, лише спільний PDF, або обидва для того самого діапазону.
                 </p>
             </div>
 
@@ -643,14 +824,10 @@ export default function TicketPdfExport() {
             <button
                 type="button"
                 className="btn btn-primary w-full"
-                disabled={busy}
+                disabled={busy || (!individualPdfs && !combinedPdf)}
                 onClick={() => void generate()}
             >
-                {busy
-                    ? 'Генерація…'
-                    : splitArchives
-                      ? `Згенерувати ZIP×${Math.max(1, Math.ceil(ranged.length / Math.max(1, ticketsPerArchive)))}${combinedPdf ? ' + PDF' : ''} (${ranged.length})`
-                      : `Згенерувати ZIP (${ranged.length} PDF${combinedPdf ? ' + загальний' : ''})`}
+                {generateLabel()}
             </button>
         </div>
     );
